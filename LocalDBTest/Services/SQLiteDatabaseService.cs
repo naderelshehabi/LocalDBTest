@@ -161,26 +161,29 @@ public class SQLiteDatabaseService : ISQLiteDatabaseService
         var peopleList = people.ToList();
         if (!peopleList.Any()) return;
         
-        var personIds = peopleList.Select(p => p.Id).ToArray();
+        var personIds = peopleList.Select(p => p.Id).ToList();
         
-        // SQLite parameter limit is 32766, so we need to batch if there are many IDs
-        // Using a smaller batch size (500) for better performance
-        const int batchSize = 500;
+        // Use batching to avoid "Too many SQL variables" error
+        const int batchSize = 500; // SQLite typically has a limit of around 999 variables
         
-        for (int i = 0; i < personIds.Length; i += batchSize)
+        // Process in batches
+        for (int i = 0; i < personIds.Count; i += batchSize)
         {
-            // Get the current batch of IDs
-            var batchIds = personIds.Skip(i).Take(batchSize).ToArray();
+            var batchIds = personIds.Skip(i).Take(batchSize).ToList();
+            var batchPeople = peopleList.Where(p => batchIds.Contains(p.Id)).ToList();
             
             await _database.RunInTransactionAsync((SQLiteConnection conn) =>
             {
-                // Create properly indexed parameters (?1, ?2, etc.)
-                string parameters = string.Join(",", Enumerable.Range(1, batchIds.Length).Select(i => $"?{i}"));
+                // Delete related addresses for this batch using bulk delete
+                conn.Table<Address>().Delete(a => batchIds.Contains(a.PersonId));
                 
-                // Execute batch delete queries
-                conn.Execute($"DELETE FROM Addresses WHERE PersonId IN ({parameters})", batchIds);
-                conn.Execute($"DELETE FROM EmailAddresses WHERE PersonId IN ({parameters})", batchIds);
-                conn.Execute($"DELETE FROM People WHERE Id IN ({parameters})", batchIds);
+                // Delete related emails for this batch using bulk delete
+                conn.Table<EmailAddress>().Delete(e => batchIds.Contains(e.PersonId));
+                
+                // Delete people in this batch using bulk delete if possible
+                // Since we need to delete specific entities, we'll use a more efficient approach
+                var deleteQuery = $"DELETE FROM People WHERE Id IN ({string.Join(",", batchIds)})";
+                conn.Execute(deleteQuery);
             });
         }
     }
@@ -203,16 +206,30 @@ public class SQLiteDatabaseService : ISQLiteDatabaseService
         var people = await _database.Table<Person>().ToListAsync();
         if (!people.Any()) return people; // Early return if empty
         
-        var personIds = people.Select(p => p.Id).ToArray();
+        var personIds = people.Select(p => p.Id).ToList();
 
-        // Fetch all related data in bulk
-        var addresses = await _database.Table<Address>()
-            .Where(a => personIds.Contains(a.PersonId))
-            .ToListAsync();
+        // Use batching to avoid "Too many SQL variables" error
+        const int batchSize = 500; // SQLite typically has a limit of around 999 variables
+        var addresses = new List<Address>();
+        var emails = new List<EmailAddress>();
 
-        var emails = await _database.Table<EmailAddress>()
-            .Where(e => personIds.Contains(e.PersonId))
-            .ToListAsync();
+        // Process in batches
+        for (int i = 0; i < personIds.Count; i += batchSize)
+        {
+            var batchIds = personIds.Skip(i).Take(batchSize).ToList();
+            
+            // Fetch addresses for this batch
+            var batchAddresses = await _database.Table<Address>()
+                .Where(a => batchIds.Contains(a.PersonId))
+                .ToListAsync();
+            addresses.AddRange(batchAddresses);
+            
+            // Fetch emails for this batch
+            var batchEmails = await _database.Table<EmailAddress>()
+                .Where(e => batchIds.Contains(e.PersonId))
+                .ToListAsync();
+            emails.AddRange(batchEmails);
+        }
 
         // Group and assign related data - use ToLookup for better performance
         var addressLookup = addresses.ToLookup(a => a.PersonId);
@@ -302,9 +319,13 @@ public class SQLiteDatabaseService : ISQLiteDatabaseService
         await InitializeAsync();
         await _database.RunInTransactionAsync((conn) =>
         {
-            // Fix table names to match the actual table names in the database
-            conn.Execute("DELETE FROM Addresses WHERE PersonId = ?", person.Id);
-            conn.Execute("DELETE FROM EmailAddresses WHERE PersonId = ?", person.Id);
+            // Delete all related addresses with a single query using DeleteAll with a predicate
+            conn.Table<Address>().Delete(a => a.PersonId == person.Id);
+            
+            // Delete all related emails with a single query using DeleteAll with a predicate
+            conn.Table<EmailAddress>().Delete(e => e.PersonId == person.Id);
+            
+            // Delete the person
             conn.Delete(person);
         });
         return 1;
