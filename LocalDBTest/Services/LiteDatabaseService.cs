@@ -116,12 +116,11 @@ public class LiteDatabaseService : IDatabaseService, IDisposable
     {
         return Task.Run(() =>
         {
-            var peopleList = people.ToList(); // Materialize the collection once
-            if (!peopleList.Any()) return; // Early return if empty
+            var peopleList = people.ToList();
+            if (!peopleList.Any()) return;
             
             var db = GetDatabase();
             
-            // Use BeginTrans to start a transaction
             db.BeginTrans();
             
             try
@@ -130,41 +129,40 @@ public class LiteDatabaseService : IDatabaseService, IDisposable
                 var addressesCol = GetCollection<Address>("addresses");
                 var emailsCol = GetCollection<EmailAddress>("emails");
 
-                // Insert people in bulk
+                // Insert all people at once
                 peopleCol.Insert(peopleList);
-
-                // Prepare all relationships in one pass
-                var addresses = new List<Address>();
-                var emails = new List<EmailAddress>();
-
-                foreach (var person in peopleList)
-                {
-                    foreach (var address in person.Addresses)
+                
+                // Process addresses - extract all at once with LINQ
+                var addresses = peopleList
+                    .Where(p => p.Addresses?.Any() == true)
+                    .SelectMany(p => p.Addresses.Select(a => 
                     {
-                        address.PersonId = person.Id;
-                        addresses.Add(address);
-                    }
-                    
-                    foreach (var email in person.EmailAddresses)
+                        a.PersonId = p.Id;
+                        return a;
+                    }))
+                    .ToList();
+                
+                // Process emails - extract all at once with LINQ
+                var emails = peopleList
+                    .Where(p => p.EmailAddresses?.Any() == true)
+                    .SelectMany(p => p.EmailAddresses.Select(e => 
                     {
-                        email.PersonId = person.Id;
-                        emails.Add(email);
-                    }
-                }
-
-                // Bulk insert related data
+                        e.PersonId = p.Id;
+                        return e;
+                    }))
+                    .ToList();
+                
+                // Insert related data
                 if (addresses.Any())
                     addressesCol.Insert(addresses);
                 
                 if (emails.Any())
                     emailsCol.Insert(emails);
                     
-                // Commit transaction
                 db.Commit();
             }
             catch
             {
-                // Rollback on error
                 db.Rollback();
                 throw;
             }
@@ -259,25 +257,10 @@ public class LiteDatabaseService : IDatabaseService, IDisposable
             {
                 var peopleCol = GetCollection<Person>("people");
                 
-                // Use batch operations for large datasets
-                if (peopleList.Count > 1000)
+                // Process all updates in one pass
+                foreach (var person in peopleList)
                 {
-                    // Use batch operations instead of individual updates
-                    foreach (var batch in peopleList.Chunk(500))
-                    {
-                        foreach (var person in batch)
-                        {
-                            peopleCol.Update(person);
-                        }
-                    }
-                }
-                else
-                {
-                    // Standard approach for smaller datasets
-                    foreach (var person in peopleList)
-                    {
-                        peopleCol.Update(person);
-                    }
+                    peopleCol.Update(person);
                 }
                 
                 db.Commit();
