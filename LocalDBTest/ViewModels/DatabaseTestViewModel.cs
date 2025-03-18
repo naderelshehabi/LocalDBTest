@@ -16,6 +16,18 @@ public class DatabaseTestViewModel : INotifyPropertyChanged
     private string _sqliteStatus = string.Empty;
     private bool _isBusy;
 
+    // Performance metrics for LiteDB
+    private long _liteDbInsertTime;
+    private long _liteDbSelectTime;
+    private long _liteDbUpdateTime;
+    private long _liteDbDeleteTime;
+
+    // Performance metrics for SQLite
+    private long _sqliteInsertTime;
+    private long _sqliteSelectTime;
+    private long _sqliteUpdateTime;
+    private long _sqliteDeleteTime;
+
     public DatabaseTestViewModel(IDatabaseService liteDbService, ISQLiteDatabaseService sqliteService)
     {
         _liteDbService = liteDbService;
@@ -25,6 +37,113 @@ public class DatabaseTestViewModel : INotifyPropertyChanged
         TestSqliteCommand = new Command(async () => await TestSqlite());
     }
 
+    // Properties for LiteDB metrics
+    public long LiteDbInsertTime
+    {
+        get => _liteDbInsertTime;
+        set
+        {
+            if (_liteDbInsertTime != value)
+            {
+                _liteDbInsertTime = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    public long LiteDbSelectTime
+    {
+        get => _liteDbSelectTime;
+        set
+        {
+            if (_liteDbSelectTime != value)
+            {
+                _liteDbSelectTime = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    public long LiteDbUpdateTime
+    {
+        get => _liteDbUpdateTime;
+        set
+        {
+            if (_liteDbUpdateTime != value)
+            {
+                _liteDbUpdateTime = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    public long LiteDbDeleteTime
+    {
+        get => _liteDbDeleteTime;
+        set
+        {
+            if (_liteDbDeleteTime != value)
+            {
+                _liteDbDeleteTime = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    // Properties for SQLite metrics
+    public long SqliteInsertTime
+    {
+        get => _sqliteInsertTime;
+        set
+        {
+            if (_sqliteInsertTime != value)
+            {
+                _sqliteInsertTime = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    public long SqliteSelectTime
+    {
+        get => _sqliteSelectTime;
+        set
+        {
+            if (_sqliteSelectTime != value)
+            {
+                _sqliteSelectTime = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    public long SqliteUpdateTime
+    {
+        get => _sqliteUpdateTime;
+        set
+        {
+            if (_sqliteUpdateTime != value)
+            {
+                _sqliteUpdateTime = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    public long SqliteDeleteTime
+    {
+        get => _sqliteDeleteTime;
+        set
+        {
+            if (_sqliteDeleteTime != value)
+            {
+                _sqliteDeleteTime = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    // Existing properties
     public ICommand TestLiteDbCommand { get; }
     public ICommand TestSqliteCommand { get; }
 
@@ -88,27 +207,33 @@ public class DatabaseTestViewModel : INotifyPropertyChanged
 
         try
         {
-            var sw = System.Diagnostics.Stopwatch.StartNew();
             var people = await Task.Run(() => GenerateRandomPeople(NumberOfRecords));
             
             // Insert Test
             LiteDbStatus = "Inserting records...";
+            var insertSw = System.Diagnostics.Stopwatch.StartNew();
             await Task.Run(() => {
                 var db = _liteDbService.GetDatabase();
                 var collection = db.GetCollection<Person>("people");
                 collection.Insert(people);
             });
+            insertSw.Stop();
+            LiteDbInsertTime = insertSw.ElapsedMilliseconds;
             
             // Select Test
             LiteDbStatus = "Selecting records...";
+            var selectSw = System.Diagnostics.Stopwatch.StartNew();
             var loadedPeople = await Task.Run(() => {
                 var db = _liteDbService.GetDatabase();
                 var collection = db.GetCollection<Person>("people");
                 return collection.FindAll().ToList();
             });
+            selectSw.Stop();
+            LiteDbSelectTime = selectSw.ElapsedMilliseconds;
             
             // Update Test
             LiteDbStatus = "Updating records...";
+            var updateSw = System.Diagnostics.Stopwatch.StartNew();
             await Task.Run(() => {
                 var db = _liteDbService.GetDatabase();
                 var collection = db.GetCollection<Person>("people");
@@ -118,17 +243,21 @@ public class DatabaseTestViewModel : INotifyPropertyChanged
                     collection.Update(person);
                 }
             });
+            updateSw.Stop();
+            LiteDbUpdateTime = updateSw.ElapsedMilliseconds;
             
             // Delete Test
             LiteDbStatus = "Deleting records...";
+            var deleteSw = System.Diagnostics.Stopwatch.StartNew();
             await Task.Run(() => {
                 var db = _liteDbService.GetDatabase();
                 var collection = db.GetCollection<Person>("people");
                 collection.DeleteAll();
             });
+            deleteSw.Stop();
+            LiteDbDeleteTime = deleteSw.ElapsedMilliseconds;
             
-            sw.Stop();
-            LiteDbStatus = $"Test completed in {sw.ElapsedMilliseconds}ms";
+            LiteDbStatus = "Test completed";
         }
         catch (Exception ex)
         {
@@ -148,7 +277,6 @@ public class DatabaseTestViewModel : INotifyPropertyChanged
 
         try
         {
-            var sw = System.Diagnostics.Stopwatch.StartNew();
             var people = GenerateRandomPeople(NumberOfRecords);
             
             // Initialize
@@ -156,6 +284,7 @@ public class DatabaseTestViewModel : INotifyPropertyChanged
             
             // Insert Test
             SqliteStatus = "Inserting records...";
+            var insertSw = System.Diagnostics.Stopwatch.StartNew();
             foreach (var person in people)
             {
                 await _sqliteService.SavePersonAsync(person);
@@ -170,28 +299,38 @@ public class DatabaseTestViewModel : INotifyPropertyChanged
                     await _sqliteService.SaveEmailAsync(email);
                 }
             }
+            insertSw.Stop();
+            SqliteInsertTime = insertSw.ElapsedMilliseconds;
             
             // Select Test
             SqliteStatus = "Selecting records...";
+            var selectSw = System.Diagnostics.Stopwatch.StartNew();
             var loadedPeople = await _sqliteService.GetPeopleAsync();
+            selectSw.Stop();
+            SqliteSelectTime = selectSw.ElapsedMilliseconds;
             
             // Update Test
             SqliteStatus = "Updating records...";
+            var updateSw = System.Diagnostics.Stopwatch.StartNew();
             foreach (var person in loadedPeople)
             {
                 person.FirstName = "Updated_" + person.FirstName;
                 await _sqliteService.SavePersonAsync(person);
             }
+            updateSw.Stop();
+            SqliteUpdateTime = updateSw.ElapsedMilliseconds;
             
             // Delete Test
             SqliteStatus = "Deleting records...";
+            var deleteSw = System.Diagnostics.Stopwatch.StartNew();
             foreach (var person in loadedPeople)
             {
                 await _sqliteService.DeletePersonAsync(person);
             }
+            deleteSw.Stop();
+            SqliteDeleteTime = deleteSw.ElapsedMilliseconds;
             
-            sw.Stop();
-            SqliteStatus = $"Test completed in {sw.ElapsedMilliseconds}ms";
+            SqliteStatus = "Test completed";
         }
         catch (Exception ex)
         {

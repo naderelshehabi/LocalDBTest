@@ -6,14 +6,17 @@
              x:DataType="viewmodels:DatabaseTestViewModel">
 
     <ScrollView>
-        <VerticalStackLayout Spacing="10" Padding="20">
+        <VerticalStackLayout Spacing="15" Padding="20">
+            <!-- Header -->
             <Label Text="Database Performance Test"
                    FontSize="24"
-                   HorizontalOptions="Center"/>
+                   HorizontalOptions="Center"
+                   Margin="0,0,0,10"/>
 
+            <!-- Configuration Section -->
             <Border Stroke="Gray"
                     StrokeThickness="1"
-                    Padding="10">
+                    Padding="15">
                 <VerticalStackLayout Spacing="10">
                     <Label Text="Test Configuration"
                            FontSize="18"/>
@@ -28,35 +31,151 @@
                 </VerticalStackLayout>
             </Border>
 
-            <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
+            <!-- Database Tests Grid -->
+            <Grid ColumnDefinitions="*,*" 
+                  ColumnSpacing="15" 
+                  Margin="0,10">
+                
                 <!-- LiteDB Test -->
-                <VerticalStackLayout Grid.Column="0" Spacing="10">
-                    <Label Text="LiteDB Test"
-                           FontSize="18"
-                           HorizontalOptions="Center"/>
-                    <Button Text="Run LiteDB Test"
-                            Command="{Binding TestLiteDbCommand}"
-                            IsEnabled="{Binding IsBusy, Converter={StaticResource InverseBoolConverter}}"/>
-                    <Label Text="{Binding LiteDbStatus}"
-                           HorizontalOptions="Center"/>
-                </VerticalStackLayout>
+                <Border Grid.Column="0"
+                        Stroke="Gray"
+                        StrokeThickness="1"
+                        Padding="10">
+                    <VerticalStackLayout Spacing="10">
+                        <Label Text="LiteDB Test"
+                               FontSize="18"
+                               HorizontalOptions="Center"/>
+                        <Button Text="Run LiteDB Test"
+                                Command="{Binding TestLiteDbCommand}"
+                                IsEnabled="{Binding IsBusy, Converter={StaticResource InverseBoolConverter}}"
+                                Margin="0,0,0,5"/>
+                        <Label Text="{Binding LiteDbStatus}"
+                               HorizontalOptions="Center"
+                               HorizontalTextAlignment="Center"/>
+                        
+                        <!-- LiteDB Metrics -->
+                        <BoxView Color="LightGray" 
+                                HeightRequest="1" 
+                                Margin="0,5"/>
+                        <Label Text="Performance Metrics"
+                               FontAttributes="Bold"
+                               HorizontalOptions="Center"/>
+                        <Grid ColumnDefinitions="70,*" 
+                              RowDefinitions="25, 25, 25, 25"
+                              ColumnSpacing="15"
+                              Margin="5,5">
+                            <Label Text="INSERT:" 
+                                   Grid.Row="0" Grid.Column="0" 
+                                   FontSize="14"
+                                   VerticalOptions="Center"/>
+                            <Label Text="{Binding LiteDbInsertTime, StringFormat='{0} ms'}" 
+                                   Grid.Row="0" Grid.Column="1" 
+                                   FontSize="14"
+                                   VerticalOptions="Center"/>
+                            
+                            <Label Text="SELECT:" 
+                                   Grid.Row="1" Grid.Column="0" 
+                                   FontSize="14"
+                                   VerticalOptions="Center"/>
+                            <Label Text="{Binding LiteDbSelectTime, StringFormat='{0} ms'}" 
+                                   Grid.Row="1" Grid.Column="1" 
+                                   FontSize="14"
+                                   VerticalOptions="Center"/>
+                            
+                            <Label Text="UPDATE:" 
+                                   Grid.Row="2" Grid.Column="0" 
+                                   FontSize="14"
+                                   VerticalOptions="Center"/>
+                            <Label Text="{Binding LiteDbUpdateTime, StringFormat='{0} ms'}" 
+                                   Grid.Row="2" Grid.Column="1" 
+                                   FontSize="14"
+                                   VerticalOptions="Center"/>
+                            
+                            <Label Text="DELETE:" 
+                                   Grid.Row="3" Grid.Column="0" 
+                                   FontSize="14"
+                                   VerticalOptions="Center"/>
+                            <Label Text="{Binding LiteDbDeleteTime, StringFormat='{0} ms'}" 
+                                   Grid.Row="3" Grid.Column="1" 
+                                   FontSize="14"
+                                   VerticalOptions="Center"/>
+                        </Grid>
+                    </VerticalStackLayout>
+                </Border>
 
                 <!-- SQLite Test -->
-                <VerticalStackLayout Grid.Column="1" Spacing="10">
-                    <Label Text="SQLite Test"
-                           FontSize="18"
-                           HorizontalOptions="Center"/>
-                    <Button Text="Run SQLite Test"
-                            Command="{Binding TestSqliteCommand}"
-                            IsEnabled="{Binding IsBusy, Converter={StaticResource InverseBoolConverter}}"/>
-                    <Label Text="{Binding SqliteStatus}"
-                           HorizontalOptions="Center"/>
-                </VerticalStackLayout>
+                <Border Grid.Column="1"
+                        Stroke="Gray"
+                        StrokeThickness="1"
+                        Padding="10">
+                    <VerticalStackLayout Spacing="10">
+                        <Label Text="SQLite Test"
+                               FontSize="18"
+                               HorizontalOptions="Center"/>
+                        <Button Text="Run SQLite Test"
+                                Command="{Binding TestSqliteCommand}"
+                                IsEnabled="{Binding IsBusy, Converter={StaticResource InverseBoolConverter}}"
+                                Margin="0,0,0,5"/>
+                        <Label Text="{Binding SqliteStatus}"
+                               HorizontalOptions="Center"
+                               HorizontalTextAlignment="Center"/>
+                               
+                        <!-- SQLite Metrics -->
+                        <BoxView Color="LightGray" 
+                                HeightRequest="1" 
+                                Margin="0,5"/>
+                        <Label Text="Performance Metrics"
+                               FontAttributes="Bold"
+                               HorizontalOptions="Center"/>
+                        <Grid ColumnDefinitions="70,*" 
+                              RowDefinitions="25, 25, 25, 25"
+                              ColumnSpacing="15"
+                              Margin="5,5">
+                            <Label Text="INSERT:" 
+                                   Grid.Row="0" Grid.Column="0" 
+                                   FontSize="14"
+                                   VerticalOptions="Center"/>
+                            <Label Text="{Binding SqliteInsertTime, StringFormat='{0} ms'}" 
+                                   Grid.Row="0" Grid.Column="1" 
+                                   FontSize="14"
+                                   VerticalOptions="Center"/>
+                            
+                            <Label Text="SELECT:" 
+                                   Grid.Row="1" Grid.Column="0" 
+                                   FontSize="14"
+                                   VerticalOptions="Center"/>
+                            <Label Text="{Binding SqliteSelectTime, StringFormat='{0} ms'}" 
+                                   Grid.Row="1" Grid.Column="1" 
+                                   FontSize="14"
+                                   VerticalOptions="Center"/>
+                            
+                            <Label Text="UPDATE:" 
+                                   Grid.Row="2" Grid.Column="0" 
+                                   FontSize="14"
+                                   VerticalOptions="Center"/>
+                            <Label Text="{Binding SqliteUpdateTime, StringFormat='{0} ms'}" 
+                                   Grid.Row="2" Grid.Column="1" 
+                                   FontSize="14"
+                                   VerticalOptions="Center"/>
+                            
+                            <Label Text="DELETE:" 
+                                   Grid.Row="3" Grid.Column="0" 
+                                   FontSize="14"
+                                   VerticalOptions="Center"/>
+                            <Label Text="{Binding SqliteDeleteTime, StringFormat='{0} ms'}" 
+                                   Grid.Row="3" Grid.Column="1" 
+                                   FontSize="14"
+                                   VerticalOptions="Center"/>
+                        </Grid>
+                    </VerticalStackLayout>
+                </Border>
             </Grid>
 
+            <!-- Activity Indicator -->
             <ActivityIndicator IsRunning="{Binding IsBusy}"
                              IsVisible="{Binding IsBusy}"
-                             HorizontalOptions="Center"/>
+                             HorizontalOptions="Center"
+                             Margin="0,10"/>
         </VerticalStackLayout>
     </ScrollView>
 
