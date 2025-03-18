@@ -8,12 +8,12 @@ public interface IDatabaseService
     LiteDatabase GetDatabase();
 }
 
-public class DatabaseService : IDatabaseService
+public class LiteDatabaseService : IDatabaseService
 {
     private readonly string _dbPath;
     private LiteDatabase _database;
 
-    public DatabaseService()
+    public LiteDatabaseService()
     {
         var path = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         _dbPath = Path.Combine(path, "app.db");

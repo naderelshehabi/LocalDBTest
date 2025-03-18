@@ -19,7 +19,7 @@ public static class MauiProgram
 		// Initialize SQLite
 		SQLitePCL.Batteries.Init();
 
-		builder.Services.AddSingleton<IDatabaseService, DatabaseService>();
+		builder.Services.AddSingleton<IDatabaseService, LiteDatabaseService>();
 		builder.Services.AddSingleton<ISQLiteDatabaseService, SQLiteDatabaseService>();
 
 #if DEBUG

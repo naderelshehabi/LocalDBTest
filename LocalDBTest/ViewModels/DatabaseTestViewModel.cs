@@ -285,20 +285,7 @@ public class DatabaseTestViewModel : INotifyPropertyChanged
             // Insert Test
             SqliteStatus = "Inserting records...";
             var insertSw = System.Diagnostics.Stopwatch.StartNew();
-            foreach (var person in people)
-            {
-                await _sqliteService.SavePersonAsync(person);
-                foreach (var address in person.Addresses)
-                {
-                    address.PersonId = person.Id;
-                    await _sqliteService.SaveAddressAsync(address);
-                }
-                foreach (var email in person.EmailAddresses)
-                {
-                    email.PersonId = person.Id;
-                    await _sqliteService.SaveEmailAsync(email);
-                }
-            }
+            await _sqliteService.SavePeopleWithRelationsAsync(people);
             insertSw.Stop();
             SqliteInsertTime = insertSw.ElapsedMilliseconds;
             
@@ -315,18 +302,15 @@ public class DatabaseTestViewModel : INotifyPropertyChanged
             foreach (var person in loadedPeople)
             {
                 person.FirstName = "Updated_" + person.FirstName;
-                await _sqliteService.SavePersonAsync(person);
             }
+            await _sqliteService.UpdatePeopleAsync(loadedPeople);
             updateSw.Stop();
             SqliteUpdateTime = updateSw.ElapsedMilliseconds;
             
             // Delete Test
             SqliteStatus = "Deleting records...";
             var deleteSw = System.Diagnostics.Stopwatch.StartNew();
-            foreach (var person in loadedPeople)
-            {
-                await _sqliteService.DeletePersonAsync(person);
-            }
+            await _sqliteService.DeletePeopleAsync(loadedPeople);
             deleteSw.Stop();
             SqliteDeleteTime = deleteSw.ElapsedMilliseconds;
             

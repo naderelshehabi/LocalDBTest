@@ -16,6 +16,10 @@ public interface ISQLiteDatabaseService
     Task<int> DeletePersonAsync(Person person);
     Task<int> DeleteAddressAsync(Address address);
     Task<int> DeleteEmailAsync(EmailAddress email);
+    Task RunInTransactionAsync(Func<SQLiteAsyncConnection, Task> action);
+    Task SavePeopleWithRelationsAsync(IEnumerable<Person> people);
+    Task DeletePeopleAsync(IEnumerable<Person> people);
+    Task UpdatePeopleAsync(IEnumerable<Person> people);
 }
 
 public class SQLiteDatabaseService : ISQLiteDatabaseService
@@ -39,6 +43,79 @@ public class SQLiteDatabaseService : ISQLiteDatabaseService
         await _database.CreateTableAsync<EmailAddress>();
 
         _isInitialized = true;
+    }
+
+    public async Task RunInTransactionAsync(Func<SQLiteAsyncConnection, Task> action)
+    {
+        await InitializeAsync();
+        await _database.RunInTransactionAsync((SQLiteConnection conn) =>
+        {
+            // We can't use async/await directly in the transaction action
+            // so we'll run the async operation synchronously
+            action(_database).Wait();
+        });
+    }
+
+    public async Task SavePeopleWithRelationsAsync(IEnumerable<Person> people)
+    {
+        await InitializeAsync();
+        await _database.RunInTransactionAsync((SQLiteConnection conn) =>
+        {
+            foreach (var person in people)
+            {
+                conn.Insert(person);
+
+                foreach (var address in person.Addresses)
+                {
+                    address.PersonId = person.Id;
+                }
+                conn.InsertAll(person.Addresses);
+
+                foreach (var email in person.EmailAddresses)
+                {
+                    email.PersonId = person.Id;
+                }
+                conn.InsertAll(person.EmailAddresses);
+            }
+        });
+    }
+
+    public async Task UpdatePeopleAsync(IEnumerable<Person> people)
+    {
+        await InitializeAsync();
+        await _database.RunInTransactionAsync((SQLiteConnection conn) =>
+        {
+            foreach (var person in people)
+            {
+                conn.Update(person);
+            }
+        });
+    }
+
+    public async Task DeletePeopleAsync(IEnumerable<Person> people)
+    {
+        await InitializeAsync();
+        await _database.RunInTransactionAsync((SQLiteConnection conn) =>
+        {
+            foreach (var person in people)
+            {
+                conn.Execute("DELETE FROM Address WHERE PersonId = ?", person.Id);
+                conn.Execute("DELETE FROM EmailAddress WHERE PersonId = ?", person.Id);
+                conn.Delete(person);
+            }
+        });
+    }
+
+    public async Task<int> SaveAddressesAsync(IEnumerable<Address> addresses)
+    {
+        await InitializeAsync();
+        return await _database.InsertAllAsync(addresses);
+    }
+
+    public async Task<int> SaveEmailsAsync(IEnumerable<EmailAddress> emails)
+    {
+        await InitializeAsync();
+        return await _database.InsertAllAsync(emails);
     }
 
     public async Task<List<Person>> GetPeopleAsync()
