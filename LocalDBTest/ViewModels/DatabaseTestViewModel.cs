@@ -207,53 +207,37 @@ public class DatabaseTestViewModel : INotifyPropertyChanged
 
         try
         {
-            var people = await Task.Run(() => GenerateRandomPeople(NumberOfRecords));
+            var people = GenerateRandomPeople(NumberOfRecords);
             
             // Insert Test
             LiteDbStatus = "Inserting records...";
             var insertSw = System.Diagnostics.Stopwatch.StartNew();
-            await Task.Run(() => {
-                var db = _liteDbService.GetDatabase();
-                var collection = db.GetCollection<Person>("people");
-                collection.Insert(people);
-            });
+            await _liteDbService.SavePeopleWithRelationsAsync(people);
             insertSw.Stop();
             LiteDbInsertTime = insertSw.ElapsedMilliseconds;
             
             // Select Test
             LiteDbStatus = "Selecting records...";
             var selectSw = System.Diagnostics.Stopwatch.StartNew();
-            var loadedPeople = await Task.Run(() => {
-                var db = _liteDbService.GetDatabase();
-                var collection = db.GetCollection<Person>("people");
-                return collection.FindAll().ToList();
-            });
+            var loadedPeople = await _liteDbService.GetPeopleAsync();
             selectSw.Stop();
             LiteDbSelectTime = selectSw.ElapsedMilliseconds;
             
             // Update Test
             LiteDbStatus = "Updating records...";
             var updateSw = System.Diagnostics.Stopwatch.StartNew();
-            await Task.Run(() => {
-                var db = _liteDbService.GetDatabase();
-                var collection = db.GetCollection<Person>("people");
-                foreach (var person in loadedPeople)
-                {
-                    person.FirstName = "Updated_" + person.FirstName;
-                    collection.Update(person);
-                }
-            });
+            foreach (var person in loadedPeople)
+            {
+                person.FirstName = "Updated_" + person.FirstName;
+            }
+            await _liteDbService.UpdatePeopleAsync(loadedPeople);
             updateSw.Stop();
             LiteDbUpdateTime = updateSw.ElapsedMilliseconds;
             
             // Delete Test
             LiteDbStatus = "Deleting records...";
             var deleteSw = System.Diagnostics.Stopwatch.StartNew();
-            await Task.Run(() => {
-                var db = _liteDbService.GetDatabase();
-                var collection = db.GetCollection<Person>("people");
-                collection.DeleteAll();
-            });
+            await _liteDbService.DeleteAllPeopleAsync();
             deleteSw.Stop();
             LiteDbDeleteTime = deleteSw.ElapsedMilliseconds;
             
