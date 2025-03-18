@@ -12,6 +12,7 @@ public interface IDatabaseService
     Task<List<Person>> GetPeopleAsync();
     Task UpdatePeopleAsync(IEnumerable<Person> people);
     Task DeleteAllPeopleAsync();
+    Task CleanDatabaseAsync();
 }
 
 public class LiteDatabaseService : IDatabaseService, IDisposable
@@ -23,11 +24,20 @@ public class LiteDatabaseService : IDatabaseService, IDisposable
     // Static flag to avoid recreating indices multiple times
     private static bool _indicesCreated = false;
     private static readonly object _indicesLock = new();
+    private readonly bool _cleanOnStartup;
 
-    public LiteDatabaseService()
+    public LiteDatabaseService(bool cleanOnStartup = false)
     {
+        _cleanOnStartup = cleanOnStartup;
         var path = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         _dbPath = Path.Combine(path, "app.db");
+        
+        // Clean the database if requested
+        if (_cleanOnStartup && File.Exists(_dbPath))
+        {
+            // Execute synchronously to ensure cleanup before first access
+            CleanDatabaseAsync().GetAwaiter().GetResult();
+        }
     }
 
     public LiteDatabase GetDatabase()
@@ -38,6 +48,17 @@ public class LiteDatabaseService : IDatabaseService, IDisposable
             try
             {
                 _database ??= new LiteDatabase(_dbPath);
+                
+                // Create indices if not done already
+                // Using lock to ensure thread safety
+                if (!_indicesCreated)
+                {
+                    CreateIndices(
+                        GetCollection<Person>("people"),
+                        GetCollection<Address>("addresses"),
+                        GetCollection<EmailAddress>("emails")
+                    );
+                }
             }
             finally
             {
@@ -45,6 +66,37 @@ public class LiteDatabaseService : IDatabaseService, IDisposable
             }
         }
         return _database;
+    }
+
+    public async Task CleanDatabaseAsync()
+    {
+        await Task.Run(() =>
+        {
+            // Ensure we're thread-safe when cleaning the database
+            _databaseLock.Wait();
+            try
+            {
+                // Dispose database connection if exists
+                _database?.Dispose();
+                _database = null;
+                
+                // Clear collection cache to ensure fresh collections after cleanup
+                _collectionCache.Clear();
+
+                // Delete database file
+                if (File.Exists(_dbPath))
+                {
+                    File.Delete(_dbPath);
+                }
+                
+                // Reset indices flag
+                _indicesCreated = false;
+            }
+            finally
+            {
+                _databaseLock.Release();
+            }
+        });
     }
 
     private LiteCollection<T> GetCollection<T>(string name) where T : class
@@ -77,9 +129,6 @@ public class LiteDatabaseService : IDatabaseService, IDisposable
                 var peopleCol = GetCollection<Person>("people");
                 var addressesCol = GetCollection<Address>("addresses");
                 var emailsCol = GetCollection<EmailAddress>("emails");
-
-                // Create indices if needed - thread-safe
-                CreateIndices(peopleCol, addressesCol, emailsCol);
 
                 // Insert people in bulk
                 peopleCol.Insert(peopleList);
@@ -133,10 +182,27 @@ public class LiteDatabaseService : IDatabaseService, IDisposable
             {
                 if (!_indicesCreated)
                 {
+                    // Create indices for People collection
                     peopleCol.EnsureIndex(x => x.FirstName);
                     peopleCol.EnsureIndex(x => x.LastName);
+                    // Composite index for efficient name search
+                    peopleCol.EnsureIndex("$.FirstName + $.LastName");
+                    
+                    // Create indices for Address collection
                     addressesCol.EnsureIndex(x => x.PersonId);
+                    addressesCol.EnsureIndex(x => x.Type);
+                    addressesCol.EnsureIndex(x => x.IsPrimary);
+                    // Compound index for common queries (e.g., primary home address)
+                    addressesCol.EnsureIndex("$.PersonId + $.IsPrimary");
+                    addressesCol.EnsureIndex("$.PersonId + $.Type");
+                    
+                    // Create indices for EmailAddress collection
                     emailsCol.EnsureIndex(x => x.PersonId);
+                    emailsCol.EnsureIndex(x => x.Type);
+                    emailsCol.EnsureIndex(x => x.IsPrimary);
+                    // Compound index for common queries (e.g., primary email)
+                    emailsCol.EnsureIndex("$.PersonId + $.IsPrimary");
+                    
                     _indicesCreated = true;
                 }
             }

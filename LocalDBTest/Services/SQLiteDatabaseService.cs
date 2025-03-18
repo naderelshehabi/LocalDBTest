@@ -21,17 +21,23 @@ public interface ISQLiteDatabaseService
     Task SavePeopleWithRelationsAsync(IEnumerable<Person> people);
     Task DeletePeopleAsync(IEnumerable<Person> people);
     Task UpdatePeopleAsync(IEnumerable<Person> people);
+    Task CleanDatabaseAsync();
 }
 
 public class SQLiteDatabaseService : ISQLiteDatabaseService
 {
     private SQLiteAsyncConnection _database;
     private bool _isInitialized;
+    private readonly string _dbPath;
+    
+    // Add flag to determine if database should be cleaned on startup
+    private readonly bool _cleanOnStartup;
 
-    public SQLiteDatabaseService()
+    public SQLiteDatabaseService(bool cleanOnStartup = false)
     {
-        var dbPath = Path.Combine(FileSystem.AppDataDirectory, "people.db");
-        _database = new SQLiteAsyncConnection(dbPath);
+        _cleanOnStartup = cleanOnStartup;
+        _dbPath = Path.Combine(FileSystem.AppDataDirectory, "people.db");
+        _database = new SQLiteAsyncConnection(_dbPath, SQLiteOpenFlags.ReadWrite | SQLiteOpenFlags.Create | SQLiteOpenFlags.SharedCache);
     }
 
     public async Task InitializeAsync()
@@ -39,11 +45,54 @@ public class SQLiteDatabaseService : ISQLiteDatabaseService
         if (_isInitialized)
             return;
 
-        await _database.CreateTableAsync<Person>();
-        await _database.CreateTableAsync<Address>();
-        await _database.CreateTableAsync<EmailAddress>();
+        // Clean database if requested
+        if (_cleanOnStartup && File.Exists(_dbPath))
+        {
+            await CleanDatabaseAsync();
+        }
+
+        // Create tables and optimize with proper indices
+        await _database.CreateTableAsync<Person>(CreateFlags.None);
+        await _database.CreateTableAsync<Address>(CreateFlags.None);
+        await _database.CreateTableAsync<EmailAddress>(CreateFlags.None);
+
+        // Create optimal indices for better query performance
+        await CreateIndicesAsync();
 
         _isInitialized = true;
+    }
+
+    public async Task CleanDatabaseAsync()
+    {
+        // Close the connection first
+        await _database.CloseAsync();
+
+        // Delete the database file
+        if (File.Exists(_dbPath))
+        {
+            File.Delete(_dbPath);
+        }
+
+        // Recreate the connection
+        _database = new SQLiteAsyncConnection(_dbPath, SQLiteOpenFlags.ReadWrite | SQLiteOpenFlags.Create | SQLiteOpenFlags.SharedCache);
+        _isInitialized = false;
+    }
+
+    private async Task CreateIndicesAsync()
+    {
+        // Create indices for Person table
+        await _database.ExecuteAsync("CREATE INDEX IF NOT EXISTS idx_person_firstname ON People(FirstName)");
+        await _database.ExecuteAsync("CREATE INDEX IF NOT EXISTS idx_person_lastname ON People(LastName)");
+        
+        // Create indices for Address table - essential for relationship lookups
+        await _database.ExecuteAsync("CREATE INDEX IF NOT EXISTS idx_address_personid ON Addresses(PersonId)");
+        await _database.ExecuteAsync("CREATE INDEX IF NOT EXISTS idx_address_type ON Addresses(Type)");
+        await _database.ExecuteAsync("CREATE INDEX IF NOT EXISTS idx_address_isprimary ON Addresses(IsPrimary)");
+        
+        // Create indices for EmailAddress table
+        await _database.ExecuteAsync("CREATE INDEX IF NOT EXISTS idx_email_personid ON EmailAddresses(PersonId)");
+        await _database.ExecuteAsync("CREATE INDEX IF NOT EXISTS idx_email_type ON EmailAddresses(Type)");
+        await _database.ExecuteAsync("CREATE INDEX IF NOT EXISTS idx_email_isprimary ON EmailAddresses(IsPrimary)");
     }
 
     public async Task RunInTransactionAsync(Func<SQLiteAsyncConnection, Task> action)
@@ -60,20 +109,24 @@ public class SQLiteDatabaseService : ISQLiteDatabaseService
     public async Task SavePeopleWithRelationsAsync(IEnumerable<Person> people)
     {
         await InitializeAsync();
+        
+        var peopleList = people.ToList();
+        if (!peopleList.Any()) return;
+        
         await _database.RunInTransactionAsync((SQLiteConnection conn) =>
         {
             // Bulk insert people
-            conn.InsertAll(people);
+            conn.InsertAll(peopleList);
 
             // Prepare all addresses with person IDs
-            var addresses = people.SelectMany(p => p.Addresses.Select(a =>
+            var addresses = peopleList.SelectMany(p => p.Addresses.Select(a =>
             {
                 a.PersonId = p.Id;
                 return a;
             })).ToList();
 
             // Prepare all emails with person IDs
-            var emails = people.SelectMany(p => p.EmailAddresses.Select(e =>
+            var emails = peopleList.SelectMany(p => p.EmailAddresses.Select(e =>
             {
                 e.PersonId = p.Id;
                 return e;
@@ -91,24 +144,45 @@ public class SQLiteDatabaseService : ISQLiteDatabaseService
     public async Task UpdatePeopleAsync(IEnumerable<Person> people)
     {
         await InitializeAsync();
+        
+        var peopleList = people.ToList();
+        if (!peopleList.Any()) return;
+        
         await _database.RunInTransactionAsync((SQLiteConnection conn) =>
         {
-            conn.UpdateAll(people);
+            conn.UpdateAll(peopleList);
         });
     }
 
     public async Task DeletePeopleAsync(IEnumerable<Person> people)
     {
         await InitializeAsync();
-        var personIds = people.Select(p => p.Id).ToArray();
-
-        await _database.RunInTransactionAsync((SQLiteConnection conn) =>
+        
+        var peopleList = people.ToList();
+        if (!peopleList.Any()) return;
+        
+        var personIds = peopleList.Select(p => p.Id).ToArray();
+        
+        // SQLite parameter limit is 32766, so we need to batch if there are many IDs
+        // Using a smaller batch size (500) for better performance
+        const int batchSize = 500;
+        
+        for (int i = 0; i < personIds.Length; i += batchSize)
         {
-            // Delete all related records in a single query per table
-            conn.Execute("DELETE FROM Address WHERE PersonId IN (" + string.Join(",", personIds) + ")");
-            conn.Execute("DELETE FROM EmailAddress WHERE PersonId IN (" + string.Join(",", personIds) + ")");
-            conn.Execute("DELETE FROM Person WHERE Id IN (" + string.Join(",", personIds) + ")");
-        });
+            // Get the current batch of IDs
+            var batchIds = personIds.Skip(i).Take(batchSize).ToArray();
+            
+            await _database.RunInTransactionAsync((SQLiteConnection conn) =>
+            {
+                // Create properly indexed parameters (?1, ?2, etc.)
+                string parameters = string.Join(",", Enumerable.Range(1, batchIds.Length).Select(i => $"?{i}"));
+                
+                // Execute batch delete queries
+                conn.Execute($"DELETE FROM Addresses WHERE PersonId IN ({parameters})", batchIds);
+                conn.Execute($"DELETE FROM EmailAddresses WHERE PersonId IN ({parameters})", batchIds);
+                conn.Execute($"DELETE FROM People WHERE Id IN ({parameters})", batchIds);
+            });
+        }
     }
 
     public async Task<int> SaveAddressesAsync(IEnumerable<Address> addresses)
@@ -127,6 +201,8 @@ public class SQLiteDatabaseService : ISQLiteDatabaseService
     {
         await InitializeAsync();
         var people = await _database.Table<Person>().ToListAsync();
+        if (!people.Any()) return people; // Early return if empty
+        
         var personIds = people.Select(p => p.Id).ToArray();
 
         // Fetch all related data in bulk
@@ -138,17 +214,15 @@ public class SQLiteDatabaseService : ISQLiteDatabaseService
             .Where(e => personIds.Contains(e.PersonId))
             .ToListAsync();
 
-        // Group and assign related data
-        var addressMap = addresses.GroupBy(a => a.PersonId)
-            .ToDictionary(g => g.Key, g => g.ToList());
-        var emailMap = emails.GroupBy(e => e.PersonId)
-            .ToDictionary(g => g.Key, g => g.ToList());
+        // Group and assign related data - use ToLookup for better performance
+        var addressLookup = addresses.ToLookup(a => a.PersonId);
+        var emailLookup = emails.ToLookup(e => e.PersonId);
 
         // Assign related data to people
         foreach (var person in people)
         {
-            person.Addresses = addressMap.TryGetValue(person.Id, out var addr) ? addr : new List<Address>();
-            person.EmailAddresses = emailMap.TryGetValue(person.Id, out var mail) ? mail : new List<EmailAddress>();
+            person.Addresses = addressLookup[person.Id].ToList();
+            person.EmailAddresses = emailLookup[person.Id].ToList();
         }
 
         return people;
@@ -228,9 +302,9 @@ public class SQLiteDatabaseService : ISQLiteDatabaseService
         await InitializeAsync();
         await _database.RunInTransactionAsync((conn) =>
         {
-            // Delete related records in a single query per table
-            conn.Execute("DELETE FROM Address WHERE PersonId = ?", person.Id);
-            conn.Execute("DELETE FROM EmailAddress WHERE PersonId = ?", person.Id);
+            // Fix table names to match the actual table names in the database
+            conn.Execute("DELETE FROM Addresses WHERE PersonId = ?", person.Id);
+            conn.Execute("DELETE FROM EmailAddresses WHERE PersonId = ?", person.Id);
             conn.Delete(person);
         });
         return 1;
