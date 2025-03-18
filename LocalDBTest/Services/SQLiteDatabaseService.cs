@@ -1,5 +1,6 @@
 using SQLite;
 using LocalDBTest.Models;
+using System.Linq;
 
 namespace LocalDBTest.Services;
 
@@ -61,22 +62,29 @@ public class SQLiteDatabaseService : ISQLiteDatabaseService
         await InitializeAsync();
         await _database.RunInTransactionAsync((SQLiteConnection conn) =>
         {
-            foreach (var person in people)
+            // Bulk insert people
+            conn.InsertAll(people);
+
+            // Prepare all addresses with person IDs
+            var addresses = people.SelectMany(p => p.Addresses.Select(a =>
             {
-                conn.Insert(person);
+                a.PersonId = p.Id;
+                return a;
+            })).ToList();
 
-                foreach (var address in person.Addresses)
-                {
-                    address.PersonId = person.Id;
-                }
-                conn.InsertAll(person.Addresses);
+            // Prepare all emails with person IDs
+            var emails = people.SelectMany(p => p.EmailAddresses.Select(e =>
+            {
+                e.PersonId = p.Id;
+                return e;
+            })).ToList();
 
-                foreach (var email in person.EmailAddresses)
-                {
-                    email.PersonId = person.Id;
-                }
-                conn.InsertAll(person.EmailAddresses);
-            }
+            // Bulk insert related data
+            if (addresses.Any())
+                conn.InsertAll(addresses);
+            
+            if (emails.Any())
+                conn.InsertAll(emails);
         });
     }
 
@@ -85,24 +93,21 @@ public class SQLiteDatabaseService : ISQLiteDatabaseService
         await InitializeAsync();
         await _database.RunInTransactionAsync((SQLiteConnection conn) =>
         {
-            foreach (var person in people)
-            {
-                conn.Update(person);
-            }
+            conn.UpdateAll(people);
         });
     }
 
     public async Task DeletePeopleAsync(IEnumerable<Person> people)
     {
         await InitializeAsync();
+        var personIds = people.Select(p => p.Id).ToArray();
+
         await _database.RunInTransactionAsync((SQLiteConnection conn) =>
         {
-            foreach (var person in people)
-            {
-                conn.Execute("DELETE FROM Address WHERE PersonId = ?", person.Id);
-                conn.Execute("DELETE FROM EmailAddress WHERE PersonId = ?", person.Id);
-                conn.Delete(person);
-            }
+            // Delete all related records in a single query per table
+            conn.Execute("DELETE FROM Address WHERE PersonId IN (" + string.Join(",", personIds) + ")");
+            conn.Execute("DELETE FROM EmailAddress WHERE PersonId IN (" + string.Join(",", personIds) + ")");
+            conn.Execute("DELETE FROM Person WHERE Id IN (" + string.Join(",", personIds) + ")");
         });
     }
 
@@ -122,11 +127,30 @@ public class SQLiteDatabaseService : ISQLiteDatabaseService
     {
         await InitializeAsync();
         var people = await _database.Table<Person>().ToListAsync();
+        var personIds = people.Select(p => p.Id).ToArray();
+
+        // Fetch all related data in bulk
+        var addresses = await _database.Table<Address>()
+            .Where(a => personIds.Contains(a.PersonId))
+            .ToListAsync();
+
+        var emails = await _database.Table<EmailAddress>()
+            .Where(e => personIds.Contains(e.PersonId))
+            .ToListAsync();
+
+        // Group and assign related data
+        var addressMap = addresses.GroupBy(a => a.PersonId)
+            .ToDictionary(g => g.Key, g => g.ToList());
+        var emailMap = emails.GroupBy(e => e.PersonId)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        // Assign related data to people
         foreach (var person in people)
         {
-            person.Addresses = await GetAddressesForPersonAsync(person.Id);
-            person.EmailAddresses = await GetEmailsForPersonAsync(person.Id);
+            person.Addresses = addressMap.TryGetValue(person.Id, out var addr) ? addr : new List<Address>();
+            person.EmailAddresses = emailMap.TryGetValue(person.Id, out var mail) ? mail : new List<EmailAddress>();
         }
+
         return people;
     }
 
@@ -136,8 +160,19 @@ public class SQLiteDatabaseService : ISQLiteDatabaseService
         var person = await _database.GetAsync<Person>(id);
         if (person != null)
         {
-            person.Addresses = await GetAddressesForPersonAsync(id);
-            person.EmailAddresses = await GetEmailsForPersonAsync(id);
+            // Get related data in parallel
+            var addressTask = _database.Table<Address>()
+                .Where(a => a.PersonId == id)
+                .ToListAsync();
+
+            var emailTask = _database.Table<EmailAddress>()
+                .Where(e => e.PersonId == id)
+                .ToListAsync();
+
+            await Task.WhenAll(addressTask, emailTask);
+
+            person.Addresses = await addressTask;
+            person.EmailAddresses = await emailTask;
         }
         return person;
     }
@@ -191,10 +226,14 @@ public class SQLiteDatabaseService : ISQLiteDatabaseService
     public async Task<int> DeletePersonAsync(Person person)
     {
         await InitializeAsync();
-        // Delete related addresses and emails first
-        await _database.Table<Address>().DeleteAsync(a => a.PersonId == person.Id);
-        await _database.Table<EmailAddress>().DeleteAsync(e => e.PersonId == person.Id);
-        return await _database.DeleteAsync(person);
+        await _database.RunInTransactionAsync((conn) =>
+        {
+            // Delete related records in a single query per table
+            conn.Execute("DELETE FROM Address WHERE PersonId = ?", person.Id);
+            conn.Execute("DELETE FROM EmailAddress WHERE PersonId = ?", person.Id);
+            conn.Delete(person);
+        });
+        return 1;
     }
 
     public async Task<int> DeleteAddressAsync(Address address)
