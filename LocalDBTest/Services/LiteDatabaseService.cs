@@ -121,7 +121,7 @@ public class LiteDatabaseService : IDatabaseService, IDisposable
             if (!peopleList.Any()) return (0, 0);
             
             var db = GetDatabase();
-            var totalAffectedRows = 0;
+            var affectedRows = 0;
             
             db.BeginTrans();
             
@@ -131,8 +131,8 @@ public class LiteDatabaseService : IDatabaseService, IDisposable
                 var addressesCol = GetCollection<Address>("addresses");
                 var emailsCol = GetCollection<EmailAddress>("emails");
 
-                // Insert all people at once
-                totalAffectedRows += peopleCol.Insert(peopleList);
+                // Insert all people at once and count only the person records
+                affectedRows = peopleCol.Insert(peopleList);
                 
                 // Process addresses - extract all at once with LINQ
                 var addresses = peopleList
@@ -154,16 +154,16 @@ public class LiteDatabaseService : IDatabaseService, IDisposable
                     }))
                     .ToList();
                 
-                // Insert related data
+                // Insert related data without counting in affected rows
                 if (addresses.Any())
-                    totalAffectedRows += addressesCol.Insert(addresses);
+                    addressesCol.Insert(addresses);
                 
                 if (emails.Any())
-                    totalAffectedRows += emailsCol.Insert(emails);
+                    emailsCol.Insert(emails);
                     
                 db.Commit();
                 
-                return (totalAffectedRows, GetDatabaseSize());
+                return (affectedRows, GetDatabaseSize());
             }
             catch
             {
@@ -244,7 +244,7 @@ public class LiteDatabaseService : IDatabaseService, IDisposable
         return await Task.Run(() =>
         {
             var db = GetDatabase();
-            var totalAffectedRows = 0;
+            var affectedRows = 0;
             
             db.BeginTrans();
             
@@ -254,10 +254,8 @@ public class LiteDatabaseService : IDatabaseService, IDisposable
                 var addressesCol = GetCollection<Address>("addresses");
                 var emailsCol = GetCollection<EmailAddress>("emails");
 
-                // Get count of records that will be deleted
-                totalAffectedRows += peopleCol.Count();
-                totalAffectedRows += addressesCol.Count();
-                totalAffectedRows += emailsCol.Count();
+                // Get count of only person records that will be deleted
+                affectedRows = peopleCol.Count();
 
                 // Delete collections
                 peopleCol.DeleteAll();
@@ -265,7 +263,7 @@ public class LiteDatabaseService : IDatabaseService, IDisposable
                 emailsCol.DeleteAll();
                 
                 db.Commit();
-                return (totalAffectedRows, GetDatabaseSize());
+                return (affectedRows, GetDatabaseSize());
             }
             catch
             {

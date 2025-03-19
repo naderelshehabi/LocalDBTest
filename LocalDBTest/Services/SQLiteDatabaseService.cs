@@ -117,41 +117,40 @@ public class SQLiteDatabaseService : ISQLiteDatabaseService
     public async Task<(int affectedRows, double dbSize)> SavePeopleWithRelationsAsync(IEnumerable<Person> people)
     {
         await InitializeAsync();
-        var totalAffectedRows = 0;
+        var affectedRows = 0;
         var peopleList = people.ToList();
 
-        // Use synchronous version for better transaction handling
         await _database.RunInTransactionAsync((conn) =>
         {
             foreach (var person in peopleList)
             {
-                // Insert person
+                // Insert person and count only person records
                 conn.Insert(person);
-                totalAffectedRows++;
+                affectedRows++;
 
-                // Insert addresses
+                // Insert addresses without counting
                 if (person.Addresses?.Any() == true)
                 {
                     foreach (var address in person.Addresses)
                     {
                         address.PersonId = person.Id;
                     }
-                    totalAffectedRows += conn.InsertAll(person.Addresses);
+                    conn.InsertAll(person.Addresses);
                 }
 
-                // Insert emails
+                // Insert emails without counting
                 if (person.EmailAddresses?.Any() == true)
                 {
                     foreach (var email in person.EmailAddresses)
                     {
                         email.PersonId = person.Id;
                     }
-                    totalAffectedRows += conn.InsertAll(person.EmailAddresses);
+                    conn.InsertAll(person.EmailAddresses);
                 }
             }
         });
 
-        return (totalAffectedRows, await GetDatabaseSizeInMb());
+        return (affectedRows, await GetDatabaseSizeInMb());
     }
 
     public async Task<(int affectedRows, double dbSize)> UpdatePeopleAsync(IEnumerable<Person> people)
@@ -175,26 +174,24 @@ public class SQLiteDatabaseService : ISQLiteDatabaseService
     public async Task<(int affectedRows, double dbSize)> DeletePeopleAsync(IEnumerable<Person> people)
     {
         await InitializeAsync();
-        var totalAffectedRows = 0;
+        var affectedRows = 0;
         var peopleList = people.ToList();
 
         await _database.RunInTransactionAsync((conn) =>
         {
             foreach (var person in peopleList)
             {
-                // Delete related addresses
-                totalAffectedRows += conn.Table<Address>().Delete(a => a.PersonId == person.Id);
+                // Delete related records without counting them
+                conn.Table<Address>().Delete(a => a.PersonId == person.Id);
+                conn.Table<EmailAddress>().Delete(e => e.PersonId == person.Id);
 
-                // Delete related emails
-                totalAffectedRows += conn.Table<EmailAddress>().Delete(e => e.PersonId == person.Id);
-
-                // Delete person
+                // Delete and count only person records
                 if (conn.Delete(person) > 0)
-                    totalAffectedRows++;
+                    affectedRows++;
             }
         });
 
-        return (totalAffectedRows, await GetDatabaseSizeInMb());
+        return (affectedRows, await GetDatabaseSizeInMb());
     }
 
     public async Task<int> SaveAddressesAsync(IEnumerable<Address> addresses)
