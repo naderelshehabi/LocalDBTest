@@ -174,21 +174,28 @@ public class SQLiteDatabaseService : ISQLiteDatabaseService
     public async Task<(int affectedRows, double dbSize)> DeletePeopleAsync(IEnumerable<Person> people)
     {
         await InitializeAsync();
-        var affectedRows = 0;
         var peopleList = people.ToList();
+        
+        if (!peopleList.Any())
+            return (0, await GetDatabaseSizeInMb());
+            
+        var affectedRows = 0;
+        var personIds = peopleList.Select(p => p.Id).ToList();
 
+        // Use a single transaction for better performance
         await _database.RunInTransactionAsync((conn) =>
         {
-            foreach (var person in peopleList)
-            {
-                // Delete related records without counting them
-                conn.Table<Address>().Delete(a => a.PersonId == person.Id);
-                conn.Table<EmailAddress>().Delete(e => e.PersonId == person.Id);
-
-                // Delete and count only person records
-                if (conn.Delete(person) > 0)
-                    affectedRows++;
-            }
+            // Delete all related records in bulk with IN clause
+            var idsParam = string.Join(",", personIds);
+            
+            // Delete addresses in bulk
+            conn.Execute($"DELETE FROM Addresses WHERE PersonId IN ({idsParam})");
+            
+            // Delete emails in bulk
+            conn.Execute($"DELETE FROM EmailAddresses WHERE PersonId IN ({idsParam})");
+            
+            // Delete people in bulk and count affected rows
+            affectedRows = conn.Execute($"DELETE FROM People WHERE Id IN ({idsParam})");
         });
 
         return (affectedRows, await GetDatabaseSizeInMb());
@@ -211,11 +218,38 @@ public class SQLiteDatabaseService : ISQLiteDatabaseService
         await InitializeAsync();
         var people = await _database.Table<Person>().ToListAsync();
 
-        // Load related data for each person
-        foreach (var person in people)
+        if (people.Any())
         {
-            person.Addresses = await GetAddressesForPersonAsync(person.Id);
-            person.EmailAddresses = await GetEmailsForPersonAsync(person.Id);
+            // Get all person IDs for batch operations
+            var personIds = people.Select(p => p.Id).ToList();
+
+            // Fetch all related data in bulk with a single query each
+            var allAddresses = await _database.Table<Address>()
+                .Where(a => personIds.Contains(a.PersonId))
+                .ToListAsync();
+
+            var allEmails = await _database.Table<EmailAddress>()
+                .Where(e => personIds.Contains(e.PersonId))
+                .ToListAsync();
+
+            // Organize related data by person ID
+            var addressesByPersonId = allAddresses.GroupBy(a => a.PersonId)
+                .ToDictionary(g => g.Key, g => g.ToList());
+
+            var emailsByPersonId = allEmails.GroupBy(e => e.PersonId)
+                .ToDictionary(g => g.Key, g => g.ToList());
+
+            // Assign related data to each person
+            foreach (var person in people)
+            {
+                person.Addresses = addressesByPersonId.ContainsKey(person.Id) 
+                    ? addressesByPersonId[person.Id] 
+                    : new List<Address>();
+                    
+                person.EmailAddresses = emailsByPersonId.ContainsKey(person.Id)
+                    ? emailsByPersonId[person.Id]
+                    : new List<EmailAddress>();
+            }
         }
 
         return (people, await GetDatabaseSizeInMb());
@@ -224,23 +258,25 @@ public class SQLiteDatabaseService : ISQLiteDatabaseService
     public async Task<Person?> GetPersonAsync(int id)
     {
         await InitializeAsync();
-        var person = await _database.GetAsync<Person>(id);
+        
+        // Use parameterized SQL query for better optimization
+        var person = await _database.QueryAsync<Person>("SELECT * FROM People WHERE Id = ? LIMIT 1", id)
+            .ContinueWith(t => t.Result.FirstOrDefault());
+            
         if (person != null)
         {
-            // Get related data in parallel
-            var addressTask = _database.Table<Address>()
-                .Where(a => a.PersonId == id)
-                .ToListAsync();
-
-            var emailTask = _database.Table<EmailAddress>()
-                .Where(e => e.PersonId == id)
-                .ToListAsync();
-
-            await Task.WhenAll(addressTask, emailTask);
-
-            person.Addresses = await addressTask;
-            person.EmailAddresses = await emailTask;
+            // Get related data using optimized methods, already running in parallel
+            var addressesTask = GetAddressesForPersonAsync(id);
+            var emailsTask = GetEmailsForPersonAsync(id);
+            
+            // Wait for both tasks to complete
+            await Task.WhenAll(addressesTask, emailsTask);
+            
+            // Assign the results
+            person.Addresses = await addressesTask;
+            person.EmailAddresses = await emailsTask;
         }
+        
         return person;
     }
 
@@ -277,17 +313,19 @@ public class SQLiteDatabaseService : ISQLiteDatabaseService
     public async Task<List<Address>> GetAddressesForPersonAsync(int personId)
     {
         await InitializeAsync();
-        return await _database.Table<Address>()
-            .Where(a => a.PersonId == personId)
-            .ToListAsync();
+        // Using parameter binding which allows SQLite to optimize the query execution plan
+        return await _database.QueryAsync<Address>(
+            "SELECT * FROM Addresses WHERE PersonId = ? ORDER BY IsPrimary DESC", 
+            personId);
     }
 
     public async Task<List<EmailAddress>> GetEmailsForPersonAsync(int personId)
     {
         await InitializeAsync();
-        return await _database.Table<EmailAddress>()
-            .Where(e => e.PersonId == personId)
-            .ToListAsync();
+        // Using parameter binding and ordering by IsPrimary for better performance and usability
+        return await _database.QueryAsync<EmailAddress>(
+            "SELECT * FROM EmailAddresses WHERE PersonId = ? ORDER BY IsPrimary DESC", 
+            personId);
     }
 
     public async Task<int> DeletePersonAsync(Person person)
