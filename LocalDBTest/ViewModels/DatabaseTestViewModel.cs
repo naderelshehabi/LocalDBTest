@@ -28,6 +28,20 @@ public class DatabaseTestViewModel : INotifyPropertyChanged
     private long _sqliteUpdateTime;
     private long _sqliteDeleteTime;
 
+    // New properties for affected rows - LiteDB
+    private int _liteDbInsertedRows;
+    private int _liteDbSelectedRows;
+    private int _liteDbUpdatedRows;
+    private int _liteDbDeletedRows;
+    private double _liteDbSize;
+
+    // New properties for affected rows - SQLite
+    private int _sqliteInsertedRows;
+    private int _sqliteSelectedRows;
+    private int _sqliteUpdatedRows;
+    private int _sqliteDeletedRows;
+    private double _sqliteDbSize;
+
     public DatabaseTestViewModel(IDatabaseService liteDbService, ISQLiteDatabaseService sqliteService)
     {
         _liteDbService = liteDbService;
@@ -35,6 +49,7 @@ public class DatabaseTestViewModel : INotifyPropertyChanged
 
         TestLiteDbCommand = new Command(async () => await TestLiteDb());
         TestSqliteCommand = new Command(async () => await TestSqlite());
+        ResetMetricsCommand = new Command(ResetMetrics);
     }
 
     // Properties for LiteDB metrics
@@ -143,9 +158,140 @@ public class DatabaseTestViewModel : INotifyPropertyChanged
         }
     }
 
+    public int LiteDbInsertedRows
+    {
+        get => _liteDbInsertedRows;
+        set
+        {
+            if (_liteDbInsertedRows != value)
+            {
+                _liteDbInsertedRows = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    public int LiteDbSelectedRows
+    {
+        get => _liteDbSelectedRows;
+        set
+        {
+            if (_liteDbSelectedRows != value)
+            {
+                _liteDbSelectedRows = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    public int LiteDbUpdatedRows
+    {
+        get => _liteDbUpdatedRows;
+        set
+        {
+            if (_liteDbUpdatedRows != value)
+            {
+                _liteDbUpdatedRows = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    public int LiteDbDeletedRows
+    {
+        get => _liteDbDeletedRows;
+        set
+        {
+            if (_liteDbDeletedRows != value)
+            {
+                _liteDbDeletedRows = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    public double LiteDbSize
+    {
+        get => _liteDbSize;
+        set
+        {
+            if (_liteDbSize != value)
+            {
+                _liteDbSize = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    public int SqliteInsertedRows
+    {
+        get => _sqliteInsertedRows;
+        set
+        {
+            if (_sqliteInsertedRows != value)
+            {
+                _sqliteInsertedRows = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    public int SqliteSelectedRows
+    {
+        get => _sqliteSelectedRows;
+        set
+        {
+            if (_sqliteSelectedRows != value)
+            {
+                _sqliteSelectedRows = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    public int SqliteUpdatedRows
+    {
+        get => _sqliteUpdatedRows;
+        set
+        {
+            if (_sqliteUpdatedRows != value)
+            {
+                _sqliteUpdatedRows = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    public int SqliteDeletedRows
+    {
+        get => _sqliteDeletedRows;
+        set
+        {
+            if (_sqliteDeletedRows != value)
+            {
+                _sqliteDeletedRows = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    public double SqliteDbSize
+    {
+        get => _sqliteDbSize;
+        set
+        {
+            if (_sqliteDbSize != value)
+            {
+                _sqliteDbSize = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
     // Existing properties
     public ICommand TestLiteDbCommand { get; }
     public ICommand TestSqliteCommand { get; }
+    public ICommand ResetMetricsCommand { get; }
 
     public int NumberOfRecords
     {
@@ -215,6 +361,8 @@ public class DatabaseTestViewModel : INotifyPropertyChanged
             await _liteDbService.SavePeopleWithRelationsAsync(people);
             insertSw.Stop();
             LiteDbInsertTime = insertSw.ElapsedMilliseconds;
+            LiteDbInsertedRows = people.Count;
+            LiteDbSize = await _liteDbService.GetDatabaseSizeInMb();
             
             // Select Test
             LiteDbStatus = "Selecting records...";
@@ -222,6 +370,8 @@ public class DatabaseTestViewModel : INotifyPropertyChanged
             var loadedPeople = await _liteDbService.GetPeopleAsync();
             selectSw.Stop();
             LiteDbSelectTime = selectSw.ElapsedMilliseconds;
+            LiteDbSelectedRows = loadedPeople.Count;
+            LiteDbSize = await _liteDbService.GetDatabaseSizeInMb();
             
             // Update Test
             LiteDbStatus = "Updating records...";
@@ -233,6 +383,8 @@ public class DatabaseTestViewModel : INotifyPropertyChanged
             await _liteDbService.UpdatePeopleAsync(loadedPeople);
             updateSw.Stop();
             LiteDbUpdateTime = updateSw.ElapsedMilliseconds;
+            LiteDbUpdatedRows = loadedPeople.Count;
+            LiteDbSize = await _liteDbService.GetDatabaseSizeInMb();
             
             // Delete Test
             LiteDbStatus = "Deleting records...";
@@ -240,6 +392,8 @@ public class DatabaseTestViewModel : INotifyPropertyChanged
             await _liteDbService.DeleteAllPeopleAsync();
             deleteSw.Stop();
             LiteDbDeleteTime = deleteSw.ElapsedMilliseconds;
+            LiteDbDeletedRows = loadedPeople.Count;
+            LiteDbSize = await _liteDbService.GetDatabaseSizeInMb();
             
             LiteDbStatus = "Test completed";
         }
@@ -272,6 +426,8 @@ public class DatabaseTestViewModel : INotifyPropertyChanged
             await _sqliteService.SavePeopleWithRelationsAsync(people);
             insertSw.Stop();
             SqliteInsertTime = insertSw.ElapsedMilliseconds;
+            SqliteInsertedRows = people.Count;
+            SqliteDbSize = await _sqliteService.GetDatabaseSizeInMb();
             
             // Select Test
             SqliteStatus = "Selecting records...";
@@ -279,6 +435,8 @@ public class DatabaseTestViewModel : INotifyPropertyChanged
             var loadedPeople = await _sqliteService.GetPeopleAsync();
             selectSw.Stop();
             SqliteSelectTime = selectSw.ElapsedMilliseconds;
+            SqliteSelectedRows = loadedPeople.Count;
+            SqliteDbSize = await _sqliteService.GetDatabaseSizeInMb();
             
             // Update Test
             SqliteStatus = "Updating records...";
@@ -290,6 +448,8 @@ public class DatabaseTestViewModel : INotifyPropertyChanged
             await _sqliteService.UpdatePeopleAsync(loadedPeople);
             updateSw.Stop();
             SqliteUpdateTime = updateSw.ElapsedMilliseconds;
+            SqliteUpdatedRows = loadedPeople.Count;
+            SqliteDbSize = await _sqliteService.GetDatabaseSizeInMb();
             
             // Delete Test
             SqliteStatus = "Deleting records...";
@@ -297,6 +457,8 @@ public class DatabaseTestViewModel : INotifyPropertyChanged
             await _sqliteService.DeletePeopleAsync(loadedPeople);
             deleteSw.Stop();
             SqliteDeleteTime = deleteSw.ElapsedMilliseconds;
+            SqliteDeletedRows = loadedPeople.Count;
+            SqliteDbSize = await _sqliteService.GetDatabaseSizeInMb();
             
             SqliteStatus = "Test completed";
         }
@@ -308,6 +470,33 @@ public class DatabaseTestViewModel : INotifyPropertyChanged
         {
             IsBusy = false;
         }
+    }
+
+    private void ResetMetrics()
+    {
+        // Reset LiteDB metrics
+        LiteDbInsertTime = 0;
+        LiteDbSelectTime = 0;
+        LiteDbUpdateTime = 0;
+        LiteDbDeleteTime = 0;
+        LiteDbInsertedRows = 0;
+        LiteDbSelectedRows = 0;
+        LiteDbUpdatedRows = 0;
+        LiteDbDeletedRows = 0;
+        LiteDbSize = 0;
+        LiteDbStatus = string.Empty;
+
+        // Reset SQLite metrics
+        SqliteInsertTime = 0;
+        SqliteSelectTime = 0;
+        SqliteUpdateTime = 0;
+        SqliteDeleteTime = 0;
+        SqliteInsertedRows = 0;
+        SqliteSelectedRows = 0;
+        SqliteUpdatedRows = 0;
+        SqliteDeletedRows = 0;
+        SqliteDbSize = 0;
+        SqliteStatus = string.Empty;
     }
 
     private List<Person> GenerateRandomPeople(int count)

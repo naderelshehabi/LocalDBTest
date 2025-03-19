@@ -13,6 +13,7 @@ public interface IDatabaseService
     Task UpdatePeopleAsync(IEnumerable<Person> people);
     Task DeleteAllPeopleAsync();
     Task CleanDatabaseAsync();
+    Task<double> GetDatabaseSizeInMb();
 }
 
 public class LiteDatabaseService : IDatabaseService, IDisposable
@@ -294,6 +295,26 @@ public class LiteDatabaseService : IDatabaseService, IDisposable
             {
                 db.Rollback();
                 throw;
+            }
+        });
+    }
+
+    public async Task<double> GetDatabaseSizeInMb()
+    {
+        return await Task.Run(() =>
+        {
+            try
+            {
+                var fileInfo = new FileInfo(_dbPath);
+                if (fileInfo.Exists)
+                {
+                    return Math.Round(fileInfo.Length / (1024.0 * 1024.0), 2);
+                }
+                return 0;
+            }
+            catch
+            {
+                return 0;
             }
         });
     }

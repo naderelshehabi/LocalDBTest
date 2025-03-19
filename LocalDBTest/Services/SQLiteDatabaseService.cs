@@ -22,6 +22,7 @@ public interface ISQLiteDatabaseService
     Task DeletePeopleAsync(IEnumerable<Person> people);
     Task UpdatePeopleAsync(IEnumerable<Person> people);
     Task CleanDatabaseAsync();
+    Task<double> GetDatabaseSizeInMb();
 }
 
 public class SQLiteDatabaseService : ISQLiteDatabaseService
@@ -341,5 +342,26 @@ public class SQLiteDatabaseService : ISQLiteDatabaseService
     {
         await InitializeAsync();
         return await _database.DeleteAsync(email);
+    }
+
+    public async Task<double> GetDatabaseSizeInMb()
+    {
+        await InitializeAsync();
+        return await Task.Run(() =>
+        {
+            try
+            {
+                var fileInfo = new FileInfo(_dbPath);
+                if (fileInfo.Exists)
+                {
+                    return Math.Round(fileInfo.Length / (1024.0 * 1024.0), 2);
+                }
+                return 0;
+            }
+            catch
+            {
+                return 0;
+            }
+        });
     }
 }
