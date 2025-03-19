@@ -8,10 +8,10 @@ namespace LocalDBTest.Services;
 public interface IDatabaseService
 {
     LiteDatabase GetDatabase();
-    Task SavePeopleWithRelationsAsync(IEnumerable<Person> people);
-    Task<List<Person>> GetPeopleAsync();
-    Task UpdatePeopleAsync(IEnumerable<Person> people);
-    Task DeleteAllPeopleAsync();
+    Task<(int affectedRows, double dbSize)> SavePeopleWithRelationsAsync(IEnumerable<Person> people);
+    Task<(List<Person> people, double dbSize)> GetPeopleAsync();
+    Task<(int affectedRows, double dbSize)> UpdatePeopleAsync(IEnumerable<Person> people);
+    Task<(int affectedRows, double dbSize)> DeleteAllPeopleAsync();
     Task CleanDatabaseAsync();
     Task<double> GetDatabaseSizeInMb();
 }
@@ -113,14 +113,15 @@ public class LiteDatabaseService : IDatabaseService, IDisposable
         });
     }
 
-    public Task SavePeopleWithRelationsAsync(IEnumerable<Person> people)
+    public async Task<(int affectedRows, double dbSize)> SavePeopleWithRelationsAsync(IEnumerable<Person> people)
     {
-        return Task.Run(() =>
+        return await Task.Run(() =>
         {
             var peopleList = people.ToList();
-            if (!peopleList.Any()) return;
+            if (!peopleList.Any()) return (0, 0);
             
             var db = GetDatabase();
+            var totalAffectedRows = 0;
             
             db.BeginTrans();
             
@@ -131,7 +132,7 @@ public class LiteDatabaseService : IDatabaseService, IDisposable
                 var emailsCol = GetCollection<EmailAddress>("emails");
 
                 // Insert all people at once
-                peopleCol.Insert(peopleList);
+                totalAffectedRows += peopleCol.Insert(peopleList);
                 
                 // Process addresses - extract all at once with LINQ
                 var addresses = peopleList
@@ -155,12 +156,14 @@ public class LiteDatabaseService : IDatabaseService, IDisposable
                 
                 // Insert related data
                 if (addresses.Any())
-                    addressesCol.Insert(addresses);
+                    totalAffectedRows += addressesCol.Insert(addresses);
                 
                 if (emails.Any())
-                    emailsCol.Insert(emails);
+                    totalAffectedRows += emailsCol.Insert(emails);
                     
                 db.Commit();
+                
+                return (totalAffectedRows, GetDatabaseSize());
             }
             catch
             {
@@ -170,47 +173,9 @@ public class LiteDatabaseService : IDatabaseService, IDisposable
         });
     }
 
-    private void CreateIndices(LiteCollection<Person> peopleCol, 
-                              LiteCollection<Address> addressesCol, 
-                              LiteCollection<EmailAddress> emailsCol)
+    public async Task<(List<Person> people, double dbSize)> GetPeopleAsync()
     {
-        // Use thread-safe singleton pattern for index creation
-        if (!_indicesCreated)
-        {
-            lock (_indicesLock)
-            {
-                if (!_indicesCreated)
-                {
-                    // Create indices for People collection
-                    peopleCol.EnsureIndex(x => x.FirstName);
-                    peopleCol.EnsureIndex(x => x.LastName);
-                    // Composite index for efficient name search
-                    peopleCol.EnsureIndex("$.FirstName + $.LastName");
-                    
-                    // Create indices for Address collection
-                    addressesCol.EnsureIndex(x => x.PersonId);
-                    addressesCol.EnsureIndex(x => x.Type);
-                    addressesCol.EnsureIndex(x => x.IsPrimary);
-                    // Compound index for common queries (e.g., primary home address)
-                    addressesCol.EnsureIndex("$.PersonId + $.IsPrimary");
-                    addressesCol.EnsureIndex("$.PersonId + $.Type");
-                    
-                    // Create indices for EmailAddress collection
-                    emailsCol.EnsureIndex(x => x.PersonId);
-                    emailsCol.EnsureIndex(x => x.Type);
-                    emailsCol.EnsureIndex(x => x.IsPrimary);
-                    // Compound index for common queries (e.g., primary email)
-                    emailsCol.EnsureIndex("$.PersonId + $.IsPrimary");
-                    
-                    _indicesCreated = true;
-                }
-            }
-        }
-    }
-
-    public Task<List<Person>> GetPeopleAsync()
-    {
-        return Task.Run(() =>
+        return await Task.Run(() =>
         {
             var db = GetDatabase();
             var peopleCol = GetCollection<Person>("people");
@@ -219,38 +184,37 @@ public class LiteDatabaseService : IDatabaseService, IDisposable
 
             // Query optimization - use FindAll() for better performance
             var people = peopleCol.FindAll().ToList();
-            if (!people.Any()) return people; // Early return if empty
+            if (!people.Any()) return (people, GetDatabaseSize()); // Early return if empty
 
-            // Get all IDs to fetch only relevant related data
             var personIds = people.Select(p => p.Id).ToArray();
             
             // Get all related data in one query each with optimized filters
-            // Use direct queries instead of Query.In with BsonArray
             var allAddresses = addressesCol.Find(a => personIds.Contains(a.PersonId))
                 .ToLookup(a => a.PersonId);
 
             var allEmails = emailsCol.Find(e => personIds.Contains(e.PersonId))
                 .ToLookup(e => e.PersonId);
 
-            // Assign related data to people - more efficient than GroupBy+Dictionary
+            // Assign related data to people
             foreach (var person in people)
             {
                 person.Addresses = allAddresses[person.Id].ToList();
                 person.EmailAddresses = allEmails[person.Id].ToList();
             }
 
-            return people;
+            return (people, GetDatabaseSize());
         });
     }
 
-    public Task UpdatePeopleAsync(IEnumerable<Person> people)
+    public async Task<(int affectedRows, double dbSize)> UpdatePeopleAsync(IEnumerable<Person> people)
     {
-        return Task.Run(() =>
+        return await Task.Run(() =>
         {
-            var peopleList = people.ToList(); // Materialize once
-            if (!peopleList.Any()) return; // Early return
+            var peopleList = people.ToList();
+            if (!peopleList.Any()) return (0, 0);
             
             var db = GetDatabase();
+            var totalAffectedRows = 0;
             
             db.BeginTrans();
             
@@ -258,13 +222,14 @@ public class LiteDatabaseService : IDatabaseService, IDisposable
             {
                 var peopleCol = GetCollection<Person>("people");
                 
-                // Process all updates in one pass
                 foreach (var person in peopleList)
                 {
-                    peopleCol.Update(person);
+                    if (peopleCol.Update(person))
+                        totalAffectedRows++;
                 }
                 
                 db.Commit();
+                return (totalAffectedRows, GetDatabaseSize());
             }
             catch
             {
@@ -274,22 +239,33 @@ public class LiteDatabaseService : IDatabaseService, IDisposable
         });
     }
 
-    public Task DeleteAllPeopleAsync()
+    public async Task<(int affectedRows, double dbSize)> DeleteAllPeopleAsync()
     {
-        return Task.Run(() =>
+        return await Task.Run(() =>
         {
             var db = GetDatabase();
+            var totalAffectedRows = 0;
             
             db.BeginTrans();
             
             try
             {
+                var peopleCol = GetCollection<Person>("people");
+                var addressesCol = GetCollection<Address>("addresses");
+                var emailsCol = GetCollection<EmailAddress>("emails");
+
+                // Get count of records that will be deleted
+                totalAffectedRows += peopleCol.Count();
+                totalAffectedRows += addressesCol.Count();
+                totalAffectedRows += emailsCol.Count();
+
                 // Delete collections
-                GetCollection<Person>("people").DeleteAll();
-                GetCollection<Address>("addresses").DeleteAll();
-                GetCollection<EmailAddress>("emails").DeleteAll();
+                peopleCol.DeleteAll();
+                addressesCol.DeleteAll();
+                emailsCol.DeleteAll();
                 
                 db.Commit();
+                return (totalAffectedRows, GetDatabaseSize());
             }
             catch
             {
@@ -297,6 +273,23 @@ public class LiteDatabaseService : IDatabaseService, IDisposable
                 throw;
             }
         });
+    }
+
+    private double GetDatabaseSize()
+    {
+        try
+        {
+            var fileInfo = new FileInfo(_dbPath);
+            if (fileInfo.Exists)
+            {
+                return Math.Round(fileInfo.Length / (1024.0 * 1024.0), 2);
+            }
+            return 0;
+        }
+        catch
+        {
+            return 0;
+        }
     }
 
     public async Task<double> GetDatabaseSizeInMb()
@@ -317,6 +310,30 @@ public class LiteDatabaseService : IDatabaseService, IDisposable
                 return 0;
             }
         });
+    }
+
+    private void CreateIndices(LiteCollection<Person> peopleCol, LiteCollection<Address> addressesCol, LiteCollection<EmailAddress> emailsCol)
+    {
+        lock (_indicesLock)
+        {
+            if (_indicesCreated) return;
+
+            // Create indices for Person collection
+            peopleCol.EnsureIndex(x => x.FirstName);
+            peopleCol.EnsureIndex(x => x.LastName);
+
+            // Create indices for Address collection
+            addressesCol.EnsureIndex(x => x.PersonId);
+            addressesCol.EnsureIndex(x => x.Type);
+            addressesCol.EnsureIndex(x => x.IsPrimary);
+
+            // Create indices for EmailAddress collection
+            emailsCol.EnsureIndex(x => x.PersonId);
+            emailsCol.EnsureIndex(x => x.Type);
+            emailsCol.EnsureIndex(x => x.IsPrimary);
+
+            _indicesCreated = true;
+        }
     }
 
     public void Dispose()

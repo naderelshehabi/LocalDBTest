@@ -358,42 +358,42 @@ public class DatabaseTestViewModel : INotifyPropertyChanged
             // Insert Test
             LiteDbStatus = "Inserting records...";
             var insertSw = System.Diagnostics.Stopwatch.StartNew();
-            await _liteDbService.SavePeopleWithRelationsAsync(people);
+            var insertResult = await _liteDbService.SavePeopleWithRelationsAsync(people);
             insertSw.Stop();
             LiteDbInsertTime = insertSw.ElapsedMilliseconds;
-            LiteDbInsertedRows = people.Count;
-            LiteDbSize = await _liteDbService.GetDatabaseSizeInMb();
+            LiteDbInsertedRows = insertResult.affectedRows;
+            LiteDbSize = insertResult.dbSize;
             
             // Select Test
             LiteDbStatus = "Selecting records...";
             var selectSw = System.Diagnostics.Stopwatch.StartNew();
-            var loadedPeople = await _liteDbService.GetPeopleAsync();
+            var selectResult = await _liteDbService.GetPeopleAsync();
             selectSw.Stop();
             LiteDbSelectTime = selectSw.ElapsedMilliseconds;
-            LiteDbSelectedRows = loadedPeople.Count;
-            LiteDbSize = await _liteDbService.GetDatabaseSizeInMb();
+            LiteDbSelectedRows = selectResult.people.Count;
+            LiteDbSize = selectResult.dbSize;
             
             // Update Test
             LiteDbStatus = "Updating records...";
             var updateSw = System.Diagnostics.Stopwatch.StartNew();
-            foreach (var person in loadedPeople)
+            foreach (var person in selectResult.people)
             {
                 person.FirstName = "Updated_" + person.FirstName;
             }
-            await _liteDbService.UpdatePeopleAsync(loadedPeople);
+            var updateResult = await _liteDbService.UpdatePeopleAsync(selectResult.people);
             updateSw.Stop();
             LiteDbUpdateTime = updateSw.ElapsedMilliseconds;
-            LiteDbUpdatedRows = loadedPeople.Count;
-            LiteDbSize = await _liteDbService.GetDatabaseSizeInMb();
+            LiteDbUpdatedRows = updateResult.affectedRows;
+            LiteDbSize = updateResult.dbSize;
             
             // Delete Test
             LiteDbStatus = "Deleting records...";
             var deleteSw = System.Diagnostics.Stopwatch.StartNew();
-            await _liteDbService.DeleteAllPeopleAsync();
+            var deleteResult = await _liteDbService.DeleteAllPeopleAsync();
             deleteSw.Stop();
             LiteDbDeleteTime = deleteSw.ElapsedMilliseconds;
-            LiteDbDeletedRows = loadedPeople.Count;
-            LiteDbSize = await _liteDbService.GetDatabaseSizeInMb();
+            LiteDbDeletedRows = deleteResult.affectedRows;
+            LiteDbSize = deleteResult.dbSize;
             
             LiteDbStatus = "Test completed";
         }
@@ -423,42 +423,42 @@ public class DatabaseTestViewModel : INotifyPropertyChanged
             // Insert Test
             SqliteStatus = "Inserting records...";
             var insertSw = System.Diagnostics.Stopwatch.StartNew();
-            await _sqliteService.SavePeopleWithRelationsAsync(people);
+            var insertResult = await _sqliteService.SavePeopleWithRelationsAsync(people);
             insertSw.Stop();
             SqliteInsertTime = insertSw.ElapsedMilliseconds;
-            SqliteInsertedRows = people.Count;
-            SqliteDbSize = await _sqliteService.GetDatabaseSizeInMb();
+            SqliteInsertedRows = insertResult.affectedRows;
+            SqliteDbSize = insertResult.dbSize;
             
             // Select Test
             SqliteStatus = "Selecting records...";
             var selectSw = System.Diagnostics.Stopwatch.StartNew();
-            var loadedPeople = await _sqliteService.GetPeopleAsync();
+            var (selectedPeople, dbSize) = await _sqliteService.GetPeopleAsync();
             selectSw.Stop();
             SqliteSelectTime = selectSw.ElapsedMilliseconds;
-            SqliteSelectedRows = loadedPeople.Count;
-            SqliteDbSize = await _sqliteService.GetDatabaseSizeInMb();
+            SqliteSelectedRows = selectedPeople.Count;
+            SqliteDbSize = dbSize;
             
             // Update Test
             SqliteStatus = "Updating records...";
             var updateSw = System.Diagnostics.Stopwatch.StartNew();
-            foreach (var person in loadedPeople)
+            foreach (var person in selectedPeople)
             {
                 person.FirstName = "Updated_" + person.FirstName;
             }
-            await _sqliteService.UpdatePeopleAsync(loadedPeople);
+            var updateResult = await _sqliteService.UpdatePeopleAsync(selectedPeople);
             updateSw.Stop();
             SqliteUpdateTime = updateSw.ElapsedMilliseconds;
-            SqliteUpdatedRows = loadedPeople.Count;
-            SqliteDbSize = await _sqliteService.GetDatabaseSizeInMb();
+            SqliteUpdatedRows = updateResult.affectedRows;
+            SqliteDbSize = updateResult.dbSize;
             
             // Delete Test
             SqliteStatus = "Deleting records...";
             var deleteSw = System.Diagnostics.Stopwatch.StartNew();
-            await _sqliteService.DeletePeopleAsync(loadedPeople);
+            var deleteResult = await _sqliteService.DeletePeopleAsync(selectedPeople);
             deleteSw.Stop();
             SqliteDeleteTime = deleteSw.ElapsedMilliseconds;
-            SqliteDeletedRows = loadedPeople.Count;
-            SqliteDbSize = await _sqliteService.GetDatabaseSizeInMb();
+            SqliteDeletedRows = deleteResult.affectedRows;
+            SqliteDbSize = deleteResult.dbSize;
             
             SqliteStatus = "Test completed";
         }

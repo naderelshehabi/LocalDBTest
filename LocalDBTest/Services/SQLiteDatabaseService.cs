@@ -7,7 +7,7 @@ namespace LocalDBTest.Services;
 public interface ISQLiteDatabaseService
 {
     Task InitializeAsync();
-    Task<List<Person>> GetPeopleAsync();
+    Task<(List<Person> people, double dbSize)> GetPeopleAsync();
     Task<Person?> GetPersonAsync(int id);
     Task<int> SavePersonAsync(Person person);
     Task<int> SaveAddressAsync(Address address);
@@ -18,9 +18,9 @@ public interface ISQLiteDatabaseService
     Task<int> DeleteAddressAsync(Address address);
     Task<int> DeleteEmailAsync(EmailAddress email);
     Task RunInTransactionAsync(Func<SQLiteAsyncConnection, Task> action);
-    Task SavePeopleWithRelationsAsync(IEnumerable<Person> people);
-    Task DeletePeopleAsync(IEnumerable<Person> people);
-    Task UpdatePeopleAsync(IEnumerable<Person> people);
+    Task<(int affectedRows, double dbSize)> SavePeopleWithRelationsAsync(IEnumerable<Person> people);
+    Task<(int affectedRows, double dbSize)> DeletePeopleAsync(IEnumerable<Person> people);
+    Task<(int affectedRows, double dbSize)> UpdatePeopleAsync(IEnumerable<Person> people);
     Task CleanDatabaseAsync();
     Task<double> GetDatabaseSizeInMb();
 }
@@ -96,97 +96,105 @@ public class SQLiteDatabaseService : ISQLiteDatabaseService
         await _database.ExecuteAsync("CREATE INDEX IF NOT EXISTS idx_email_isprimary ON EmailAddresses(IsPrimary)");
     }
 
+    private async Task RunInTransactionAsync(Action<SQLiteConnection> action)
+    {
+        await InitializeAsync();
+        await _database.RunInTransactionAsync(action);
+    }
+
     public async Task RunInTransactionAsync(Func<SQLiteAsyncConnection, Task> action)
     {
         await InitializeAsync();
-        await _database.RunInTransactionAsync((SQLiteConnection conn) =>
+        // Create a wrapper that converts the async operation to sync
+        await _database.RunInTransactionAsync(conn =>
         {
-            // We can't use async/await directly in the transaction action
-            // so we'll run the async operation synchronously
+            // We need to run the async operation synchronously here
+            // because SQLite transactions must be synchronous
             action(_database).Wait();
         });
     }
 
-    public async Task SavePeopleWithRelationsAsync(IEnumerable<Person> people)
+    public async Task<(int affectedRows, double dbSize)> SavePeopleWithRelationsAsync(IEnumerable<Person> people)
     {
         await InitializeAsync();
-        
+        var totalAffectedRows = 0;
         var peopleList = people.ToList();
-        if (!peopleList.Any()) return;
-        
-        await _database.RunInTransactionAsync((SQLiteConnection conn) =>
+
+        // Use synchronous version for better transaction handling
+        await _database.RunInTransactionAsync((conn) =>
         {
-            // Bulk insert people
-            conn.InsertAll(peopleList);
-
-            // Prepare all addresses with person IDs
-            var addresses = peopleList.SelectMany(p => p.Addresses.Select(a =>
+            foreach (var person in peopleList)
             {
-                a.PersonId = p.Id;
-                return a;
-            })).ToList();
+                // Insert person
+                conn.Insert(person);
+                totalAffectedRows++;
 
-            // Prepare all emails with person IDs
-            var emails = peopleList.SelectMany(p => p.EmailAddresses.Select(e =>
-            {
-                e.PersonId = p.Id;
-                return e;
-            })).ToList();
+                // Insert addresses
+                if (person.Addresses?.Any() == true)
+                {
+                    foreach (var address in person.Addresses)
+                    {
+                        address.PersonId = person.Id;
+                    }
+                    totalAffectedRows += conn.InsertAll(person.Addresses);
+                }
 
-            // Bulk insert related data
-            if (addresses.Any())
-                conn.InsertAll(addresses);
-            
-            if (emails.Any())
-                conn.InsertAll(emails);
+                // Insert emails
+                if (person.EmailAddresses?.Any() == true)
+                {
+                    foreach (var email in person.EmailAddresses)
+                    {
+                        email.PersonId = person.Id;
+                    }
+                    totalAffectedRows += conn.InsertAll(person.EmailAddresses);
+                }
+            }
         });
+
+        return (totalAffectedRows, await GetDatabaseSizeInMb());
     }
 
-    public async Task UpdatePeopleAsync(IEnumerable<Person> people)
+    public async Task<(int affectedRows, double dbSize)> UpdatePeopleAsync(IEnumerable<Person> people)
     {
         await InitializeAsync();
-        
+        var totalAffectedRows = 0;
         var peopleList = people.ToList();
-        if (!peopleList.Any()) return;
-        
-        await _database.RunInTransactionAsync((SQLiteConnection conn) =>
+
+        await _database.RunInTransactionAsync((conn) =>
         {
-            conn.UpdateAll(peopleList);
+            foreach (var person in peopleList)
+            {
+                if (conn.Update(person) > 0)
+                    totalAffectedRows++;
+            }
         });
+
+        return (totalAffectedRows, await GetDatabaseSizeInMb());
     }
 
-    public async Task DeletePeopleAsync(IEnumerable<Person> people)
+    public async Task<(int affectedRows, double dbSize)> DeletePeopleAsync(IEnumerable<Person> people)
     {
         await InitializeAsync();
-        
+        var totalAffectedRows = 0;
         var peopleList = people.ToList();
-        if (!peopleList.Any()) return;
-        
-        var personIds = peopleList.Select(p => p.Id).ToList();
-        
-        // Use batching to avoid "Too many SQL variables" error
-        const int batchSize = 500; // SQLite typically has a limit of around 999 variables
-        
-        // Process in batches
-        for (int i = 0; i < personIds.Count; i += batchSize)
+
+        await _database.RunInTransactionAsync((conn) =>
         {
-            var batchIds = personIds.Skip(i).Take(batchSize).ToList();
-            var batchPeople = peopleList.Where(p => batchIds.Contains(p.Id)).ToList();
-            
-            await _database.RunInTransactionAsync((SQLiteConnection conn) =>
+            foreach (var person in peopleList)
             {
-                // Delete related addresses for this batch using bulk delete
-                conn.Table<Address>().Delete(a => batchIds.Contains(a.PersonId));
-                
-                // Delete related emails for this batch using bulk delete
-                conn.Table<EmailAddress>().Delete(e => batchIds.Contains(e.PersonId));
-                
-                // Delete people in this batch using bulk delete if possible
-                // Since we need to delete specific entities, we'll use a more efficient approach
-                var deleteQuery = $"DELETE FROM People WHERE Id IN ({string.Join(",", batchIds)})";
-                conn.Execute(deleteQuery);
-            });
-        }
+                // Delete related addresses
+                totalAffectedRows += conn.Table<Address>().Delete(a => a.PersonId == person.Id);
+
+                // Delete related emails
+                totalAffectedRows += conn.Table<EmailAddress>().Delete(e => e.PersonId == person.Id);
+
+                // Delete person
+                if (conn.Delete(person) > 0)
+                    totalAffectedRows++;
+            }
+        });
+
+        return (totalAffectedRows, await GetDatabaseSizeInMb());
     }
 
     public async Task<int> SaveAddressesAsync(IEnumerable<Address> addresses)
@@ -201,49 +209,19 @@ public class SQLiteDatabaseService : ISQLiteDatabaseService
         return await _database.InsertAllAsync(emails);
     }
 
-    public async Task<List<Person>> GetPeopleAsync()
+    public async Task<(List<Person> people, double dbSize)> GetPeopleAsync()
     {
         await InitializeAsync();
         var people = await _database.Table<Person>().ToListAsync();
-        if (!people.Any()) return people; // Early return if empty
-        
-        var personIds = people.Select(p => p.Id).ToList();
 
-        // Use batching to avoid "Too many SQL variables" error
-        const int batchSize = 500; // SQLite typically has a limit of around 999 variables
-        var addresses = new List<Address>();
-        var emails = new List<EmailAddress>();
-
-        // Process in batches
-        for (int i = 0; i < personIds.Count; i += batchSize)
-        {
-            var batchIds = personIds.Skip(i).Take(batchSize).ToList();
-            
-            // Fetch addresses for this batch
-            var batchAddresses = await _database.Table<Address>()
-                .Where(a => batchIds.Contains(a.PersonId))
-                .ToListAsync();
-            addresses.AddRange(batchAddresses);
-            
-            // Fetch emails for this batch
-            var batchEmails = await _database.Table<EmailAddress>()
-                .Where(e => batchIds.Contains(e.PersonId))
-                .ToListAsync();
-            emails.AddRange(batchEmails);
-        }
-
-        // Group and assign related data - use ToLookup for better performance
-        var addressLookup = addresses.ToLookup(a => a.PersonId);
-        var emailLookup = emails.ToLookup(e => e.PersonId);
-
-        // Assign related data to people
+        // Load related data for each person
         foreach (var person in people)
         {
-            person.Addresses = addressLookup[person.Id].ToList();
-            person.EmailAddresses = emailLookup[person.Id].ToList();
+            person.Addresses = await GetAddressesForPersonAsync(person.Id);
+            person.EmailAddresses = await GetEmailsForPersonAsync(person.Id);
         }
 
-        return people;
+        return (people, await GetDatabaseSizeInMb());
     }
 
     public async Task<Person?> GetPersonAsync(int id)
