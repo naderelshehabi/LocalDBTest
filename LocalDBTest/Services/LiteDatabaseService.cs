@@ -33,12 +33,40 @@ public class LiteDatabaseService : IDatabaseService, IDisposable
         var path = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         _dbPath = Path.Combine(path, "app.db");
         
+        // Configure LiteDB mapper for proper embedded document handling
+        ConfigureLiteDBMapper();
+        
         // Clean the database if requested
         if (_cleanOnStartup && File.Exists(_dbPath))
         {
             // Execute synchronously to ensure cleanup before first access
             CleanDatabaseAsync().GetAwaiter().GetResult();
         }
+    }
+
+    private void ConfigureLiteDBMapper()
+    {
+        // Configure the global mapper to properly handle our model classes
+        var mapper = BsonMapper.Global;
+        
+        // Configure Person entity
+        mapper.Entity<Person>()
+              .Id(p => p.Id)
+              // Explicitly include the collections that have [Ignore] attribute from SQLite
+              .Field(p => p.Addresses, "Addresses")
+              .Field(p => p.EmailAddresses, "EmailAddresses");
+        
+        // Configure Address entity to be stored as embedded document
+        mapper.Entity<Address>()
+              .Id(a => a.Id)
+              // Don't store PersonId in embedded documents - it's redundant
+              .Ignore(a => a.PersonId);
+        
+        // Configure EmailAddress entity to be stored as embedded document
+        mapper.Entity<EmailAddress>()
+              .Id(e => e.Id)
+              // Don't store PersonId in embedded documents - it's redundant
+              .Ignore(e => e.PersonId);
     }
 
     public LiteDatabase GetDatabase()
@@ -48,17 +76,20 @@ public class LiteDatabaseService : IDatabaseService, IDisposable
             _databaseLock.Wait();
             try
             {
-                _database ??= new LiteDatabase(_dbPath);
+                _database ??= new LiteDatabase(new ConnectionString
+                {
+                    Filename = _dbPath,
+                    // Performance optimizations
+                    Connection = ConnectionType.Direct,
+                    // Journal can be disabled for faster writes, but less protection against corruption
+                    // Only use this if you can risk data loss
+                    // Journal = false
+                });
                 
                 // Create indices if not done already
-                // Using lock to ensure thread safety
                 if (!_indicesCreated)
                 {
-                    CreateIndices(
-                        GetCollection<Person>("people"),
-                        GetCollection<Address>("addresses"),
-                        GetCollection<EmailAddress>("emails")
-                    );
+                    CreateIndices(GetCollection<Person>("people"));
                 }
             }
             finally
@@ -121,46 +152,32 @@ public class LiteDatabaseService : IDatabaseService, IDisposable
             if (!peopleList.Any()) return (0, 0);
             
             var db = GetDatabase();
-            var affectedRows = 0;
+            int affectedRows = 0;
             
             db.BeginTrans();
             
             try
             {
                 var peopleCol = GetCollection<Person>("people");
-                var addressesCol = GetCollection<Address>("addresses");
-                var emailsCol = GetCollection<EmailAddress>("emails");
-
-                // Insert all people at once and count only the person records
+                
+                // Remove any redundant PersonId values in embedded collections
+                // This prevents duplication of data in the database
+                foreach (var person in peopleList)
+                {
+                    foreach (var address in person.Addresses)
+                    {
+                        address.PersonId = person.Id;
+                    }
+                    
+                    foreach (var email in person.EmailAddresses)
+                    {
+                        email.PersonId = person.Id;
+                    }
+                }
+                
+                // Insert all people with their embedded collections
                 affectedRows = peopleCol.Insert(peopleList);
                 
-                // Process addresses - extract all at once with LINQ
-                var addresses = peopleList
-                    .Where(p => p.Addresses?.Any() == true)
-                    .SelectMany(p => p.Addresses.Select(a => 
-                    {
-                        a.PersonId = p.Id;
-                        return a;
-                    }))
-                    .ToList();
-                
-                // Process emails - extract all at once with LINQ
-                var emails = peopleList
-                    .Where(p => p.EmailAddresses?.Any() == true)
-                    .SelectMany(p => p.EmailAddresses.Select(e => 
-                    {
-                        e.PersonId = p.Id;
-                        return e;
-                    }))
-                    .ToList();
-                
-                // Insert related data without counting in affected rows
-                if (addresses.Any())
-                    addressesCol.Insert(addresses);
-                
-                if (emails.Any())
-                    emailsCol.Insert(emails);
-                    
                 db.Commit();
                 
                 return (affectedRows, GetDatabaseSize());
@@ -177,31 +194,26 @@ public class LiteDatabaseService : IDatabaseService, IDisposable
     {
         return await Task.Run(() =>
         {
-            var db = GetDatabase();
             var peopleCol = GetCollection<Person>("people");
-            var addressesCol = GetCollection<Address>("addresses");
-            var emailsCol = GetCollection<EmailAddress>("emails");
 
-            // Query optimization - use FindAll() for better performance
+            // Query all people with their embedded collections in a single operation
             var people = peopleCol.FindAll().ToList();
-            if (!people.Any()) return (people, GetDatabaseSize()); // Early return if empty
-
-            var personIds = people.Select(p => p.Id).ToArray();
             
-            // Get all related data in one query each with optimized filters
-            var allAddresses = addressesCol.Find(a => personIds.Contains(a.PersonId))
-                .ToLookup(a => a.PersonId);
-
-            var allEmails = emailsCol.Find(e => personIds.Contains(e.PersonId))
-                .ToLookup(e => e.PersonId);
-
-            // Assign related data to people
+            // Ensure PersonId is properly set for all embedded objects
+            // This maintains compatibility with other parts of the application
             foreach (var person in people)
             {
-                person.Addresses = allAddresses[person.Id].ToList();
-                person.EmailAddresses = allEmails[person.Id].ToList();
+                foreach (var address in person.Addresses)
+                {
+                    address.PersonId = person.Id;
+                }
+                
+                foreach (var email in person.EmailAddresses)
+                {
+                    email.PersonId = person.Id;
+                }
             }
-
+            
             return (people, GetDatabaseSize());
         });
     }
@@ -222,8 +234,20 @@ public class LiteDatabaseService : IDatabaseService, IDisposable
             {
                 var peopleCol = GetCollection<Person>("people");
                 
+                // Update Person objects with embedded collections
                 foreach (var person in peopleList)
                 {
+                    // Update PersonId in embedded collections to maintain consistency
+                    foreach (var address in person.Addresses)
+                    {
+                        address.PersonId = person.Id;
+                    }
+                    
+                    foreach (var email in person.EmailAddresses)
+                    {
+                        email.PersonId = person.Id;
+                    }
+                    
                     if (peopleCol.Update(person))
                         totalAffectedRows++;
                 }
@@ -244,23 +268,18 @@ public class LiteDatabaseService : IDatabaseService, IDisposable
         return await Task.Run(() =>
         {
             var db = GetDatabase();
-            var affectedRows = 0;
             
             db.BeginTrans();
             
             try
             {
                 var peopleCol = GetCollection<Person>("people");
-                var addressesCol = GetCollection<Address>("addresses");
-                var emailsCol = GetCollection<EmailAddress>("emails");
-
-                // Get count of only person records that will be deleted
-                affectedRows = peopleCol.Count();
-
-                // Delete collections
+                
+                // Get count before deletion
+                var affectedRows = peopleCol.Count();
+                
+                // Delete all people (addresses and emails are deleted automatically)
                 peopleCol.DeleteAll();
-                addressesCol.DeleteAll();
-                emailsCol.DeleteAll();
                 
                 db.Commit();
                 return (affectedRows, GetDatabaseSize());
@@ -292,25 +311,10 @@ public class LiteDatabaseService : IDatabaseService, IDisposable
 
     public async Task<double> GetDatabaseSizeInMb()
     {
-        return await Task.Run(() =>
-        {
-            try
-            {
-                var fileInfo = new FileInfo(_dbPath);
-                if (fileInfo.Exists)
-                {
-                    return Math.Round(fileInfo.Length / (1024.0 * 1024.0), 2);
-                }
-                return 0;
-            }
-            catch
-            {
-                return 0;
-            }
-        });
+        return await Task.Run(() => GetDatabaseSize());
     }
 
-    private void CreateIndices(LiteCollection<Person> peopleCol, LiteCollection<Address> addressesCol, LiteCollection<EmailAddress> emailsCol)
+    private void CreateIndices(LiteCollection<Person> peopleCol)
     {
         lock (_indicesLock)
         {
@@ -319,16 +323,17 @@ public class LiteDatabaseService : IDatabaseService, IDisposable
             // Create indices for Person collection
             peopleCol.EnsureIndex(x => x.FirstName);
             peopleCol.EnsureIndex(x => x.LastName);
-
-            // Create indices for Address collection
-            addressesCol.EnsureIndex(x => x.PersonId);
-            addressesCol.EnsureIndex(x => x.Type);
-            addressesCol.EnsureIndex(x => x.IsPrimary);
-
-            // Create indices for EmailAddress collection
-            emailsCol.EnsureIndex(x => x.PersonId);
-            emailsCol.EnsureIndex(x => x.Type);
-            emailsCol.EnsureIndex(x => x.IsPrimary);
+            
+            // Compound index for name searches
+            peopleCol.EnsureIndex("$.FirstName + $.LastName");
+            
+            // Indices for embedded collections for faster queries
+            // Fixed potential typo from "$.Addressed[*].OsPrimary" to correct "$.Addresses[*].IsPrimary"
+            // peopleCol.EnsureIndex("$.Addresses[*].IsPrimary", "addressPrimary");
+            // peopleCol.EnsureIndex("$.Addresses[*].Type", "addressType");
+            // peopleCol.EnsureIndex("$.EmailAddresses[*].IsPrimary", "emailPrimary");
+            // peopleCol.EnsureIndex("$.EmailAddresses[*].Type", "emailType");
+            // peopleCol.EnsureIndex("$.EmailAddresses[*].Email", "emailAddress");
 
             _indicesCreated = true;
         }

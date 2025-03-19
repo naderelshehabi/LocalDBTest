@@ -393,7 +393,7 @@ public class DatabaseTestViewModel : INotifyPropertyChanged
             deleteSw.Stop();
             LiteDbDeleteTime = deleteSw.ElapsedMilliseconds;
             LiteDbDeletedRows = deleteResult.affectedRows;
-            LiteDbSize = deleteResult.dbSize;
+            // LiteDbSize = deleteResult.dbSize;
             
             LiteDbStatus = "Test completed";
         }
@@ -458,7 +458,7 @@ public class DatabaseTestViewModel : INotifyPropertyChanged
             deleteSw.Stop();
             SqliteDeleteTime = deleteSw.ElapsedMilliseconds;
             SqliteDeletedRows = deleteResult.affectedRows;
-            SqliteDbSize = deleteResult.dbSize;
+            // SqliteDbSize = deleteResult.dbSize;
             
             SqliteStatus = "Test completed";
         }
